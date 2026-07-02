@@ -36,6 +36,14 @@ const fn rapid_mix(a: u64, b: u64) -> u64 {
 /// This implementation is equivalent in logic and performance to
 /// [wyhash::wyrand](https://github.com/wangyi-fudan/wyhash) and
 /// [fastrand](https://docs.rs/fastrand/), but uses rapidhash constants/secrets.
+///
+/// # Example
+/// ```rust
+/// use rapidrand::rapidrng;
+///
+/// let mut state: u64 = 42;
+/// let value: u64 = rapidrng(&mut state);
+/// ```
 #[inline(always)]
 #[must_use]
 pub const fn rapidrng(state: &mut u64) -> u64 {
@@ -95,12 +103,12 @@ pub const fn rapidrng_single(state: &mut u64) -> u64 {
 /// number generator.
 ///
 /// With the `rand` feature, this RNG implements [`rand_core::Rng`] and [`rand_core::SeedableRng`]
-/// on top of [`rapidrng`].
+/// on top of [`rapidrng`] and is fully compatible with [`rand`] v0.10.
 ///
 /// # Example
 /// ```rust
 /// use rapidrand::RapidRng;
-/// use rand_core::{Rng, SeedableRng};
+/// use rand::{Rng, SeedableRng};
 ///
 /// let mut rng = RapidRng::seed_from_u64(42);
 /// println!("{}", rng.next_u64());
@@ -156,7 +164,9 @@ mod tests {
     // `std::collections::HashSet` / `std::vec::Vec`. The test harness always links `std`.
     extern crate std;
 
+    #[cfg(feature = "rand")]
     use rand_core::Rng;
+
     use super::*;
 
     #[cfg(feature = "rand")]

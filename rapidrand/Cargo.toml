@@ -29,5 +29,8 @@ rand = ["dep:rand_core"]  # implement rand_core's Rng/SeedableRng traits for Rap
 [dependencies]
 rand_core = { version = "0.10", default-features = false, optional = true }
 
+[dev-dependencies]
+rand = { version = "0.10" }  # for examples in doctests
+
 [lints]
 workspace = true
