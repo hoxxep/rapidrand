@@ -105,13 +105,28 @@ pub const fn rapidrng_single(state: &mut u64) -> u64 {
 /// With the `rand` feature, this RNG implements [`rand_core::Rng`] and [`rand_core::SeedableRng`]
 /// on top of [`rapidrng`] and is fully compatible with [`rand`] v0.10.
 ///
-/// # Example
-/// ```rust
-/// use rapidrand::RapidRng;
-/// use rand::{Rng, SeedableRng};
+/// # Examples
+/// Seed it from `rand`'s thread-local RNG (itself seeded from the OS) with `from_rng`:
 ///
-/// let mut rng = RapidRng::seed_from_u64(42);
-/// println!("{}", rng.next_u64());
+/// ```rust
+/// use rand::{RngExt, SeedableRng, rng};   // RngExt brings `.random()`, `.random_range()`, ...
+/// use rapidrand::RapidRng;
+///
+/// let mut rapid = RapidRng::from_rng(&mut rng());
+///
+/// let coin: bool = rapid.random();
+/// let roll = rapid.random_range(1..=6);
+/// let value: u32 = rapid.random();
+/// ```
+///
+/// For a reproducible stream, seed it from a fixed value instead:
+///
+/// ```rust
+/// use rand::{RngExt, SeedableRng};
+/// use rapidrand::RapidRng;
+///
+/// let mut rapid = RapidRng::seed_from_u64(42);
+/// let value: u32 = rapid.random();
 /// ```
 #[cfg(feature = "rand")]
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
