@@ -1,0 +1,41 @@
+[package]
+name = "rapidrand-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+rust-version = "1.85.0"
+description = "Criterion and iai-callgrind benchmarks comparing rapidrand against fastrand, turborand, nanorand, and the rust-random RNGs."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[dev-dependencies]
+rapidrand = { workspace = true, features = ["rand"] }
+criterion = "0.8"
+iai-callgrind = "0.16.1"
+
+# competitor RNGs with their own native APIs
+fastrand = "2"
+turborand = "0.10"
+nanorand = "0.8"
+
+# rust-random ecosystem — all align on rand_core 0.10, so they share the
+# `rand_core::Rng` trait with rapidrand's `RapidRng`.
+rand = { version = "0.10", features = ["std_rng"] }
+rand_core = "0.10"
+rand_pcg = "0.10"
+rand_xoshiro = "0.8"
+rand_chacha = "0.10"
+
+[[bench]]
+name = "rng"
+harness = false
+
+# Instruction-count benchmarks (iai-callgrind / callgrind). Requires valgrind and the
+# `iai-callgrind-runner` binary; see README.md.
+[[bench]]
+name = "callgrind"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,31 @@
+[package]
+name = "rapidrand-cat"
+version = "0.0.0"
+edition = "2024"
+publish = false
+rust-version = "1.85.0"
+description = "Streams raw RNG bytes (rapidrand and competitors) to stdout for PractRand / TestU01."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+rapidrand = { workspace = true, features = ["rand"] }
+
+# competitor RNGs with their own native APIs
+fastrand = "2"
+turborand = "0.10"
+nanorand = "0.8"
+
+# rust-random ecosystem — all align on rand_core 0.10, so they share the
+# `rand_core::Rng` trait with rapidrand's `RapidRng`.
+rand = { version = "0.10", features = ["std_rng"] }
+rand_core = "0.10"
+rand_pcg = "0.10"
+rand_xoshiro = "0.8"
+rand_chacha = "0.10"
+
+[[bin]]
+name = "rapidrand-cat"
+path = "src/main.rs"
+
+[lints]
+workspace = true

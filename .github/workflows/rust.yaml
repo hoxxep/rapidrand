@@ -1,0 +1,94 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-rand:
+    name: "Test (rand)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+      - name: Compile and run tests
+        run: cargo test --no-fail-fast
+
+  test-no-rand:
+    name: "Test (no-rand)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+      - name: Compile and run tests
+        run: cargo test -p rapidrand --no-fail-fast --lib --tests --no-default-features
+
+  test-32-bit:
+    name: "Test (32-bit)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: i686-unknown-linux-gnu
+      - name: Install 32-bit C/C++ toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+      - name: Compile and run tests
+        run: cargo test --target i686-unknown-linux-gnu -p rapidrand --no-fail-fast --lib --tests
+
+  test-msrv:
+    name: "Test (MSRV)"
+    runs-on: ubuntu-latest
+    env:
+      RUST_VERSION: 1.85.0
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install Rust (rustup, ${{ env.RUST_VERSION }})
+        shell: bash
+        run: rustup update ${{ env.RUST_VERSION }} --no-self-update && rustup default ${{ env.RUST_VERSION }} && cargo -V && rustc -V
+      - name: Compile and run tests (no-rand)
+        run: cargo test -p rapidrand --no-fail-fast --lib --tests --no-default-features
+      - name: Compile and run tests (rand)
+        run: cargo test -p rapidrand --no-fail-fast --lib --tests --all-features
+
+  test-docs:
+    name: "Test (docs)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+      - name: Compile and run tests
+        run: RUSTDOCFLAGS="--cfg docsrs" cargo +nightly test -p rapidrand --all-features --doc --no-fail-fast
+
+  test-wasm:
+    # Check compiling for the webassembly target with default features.
+    name: "Build (wasm)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Compile for wasm (default features)
+        run: cargo build -p rapidrand --target wasm32-unknown-unknown
+      - name: Compile for wasm (no-rand)
+        run: cargo build -p rapidrand --no-default-features --target wasm32-unknown-unknown

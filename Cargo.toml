@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["rapidrand", "rapidrand-bench", "rapidrand-cat"]
+
+[workspace.dependencies]
+rapidrand = { path = "rapidrand", default-features = false }
+
+# aggressive optimizations for benchmark consistency
+[profile.release]
+codegen-units = 1
+lto = "fat"
+incremental = false
+opt-level = 3
+
+# aggressive optimizations for benchmark consistency
+[profile.bench]
+codegen-units = 1
+lto = "fat"
+incremental = false
+opt-level = 3
+debug = true
+debug-assertions = false
+strip = false
+
+[workspace.lints.rust]
+unused_must_use = "deny"

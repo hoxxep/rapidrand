@@ -1,0 +1,33 @@
+[package]
+name = "rapidrand"
+version = "0.1.0"
+edition = "2024"
+publish = true
+rust-version = "1.85.0"  # rand_core 0.10 is edition 2024; the base (no-rng) crate builds on older toolchains
+authors = ["Liam Gray <gmail@liamg.me>"]
+description = "An extremely fast pseudo-random number generator."
+repository = "https://github.com/hoxxep/rapidrand"
+documentation = "https://docs.rs/rapidrand"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["rand", "rng", "random", "no-std", "rapidhash"]
+categories = ["algorithms", "no-std"]
+exclude = ["Cargo.lock"]
+
+[lib]
+
+# Test docs using cargo-docs. Command:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["rand"]
+rand = ["dep:rand_core"]  # implement rand_core's Rng/SeedableRng traits for RapidRng
+
+[dependencies]
+rand_core = { version = "0.10", default-features = false, optional = true }
+
+[lints]
+workspace = true

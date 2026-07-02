@@ -1,0 +1,9 @@
+# no lockfile for libs
+Cargo.lock
+
+# build files
+/target
+tools/testu01_stdin
+
+# IDE configs
+.idea/
