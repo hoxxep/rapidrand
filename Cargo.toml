@@ -18,9 +18,9 @@ codegen-units = 1
 lto = "fat"
 incremental = false
 opt-level = 3
-debug = true
+debug = false
 debug-assertions = false
-strip = false
+strip = true
 
 [workspace.lints.rust]
 unused_must_use = "deny"
