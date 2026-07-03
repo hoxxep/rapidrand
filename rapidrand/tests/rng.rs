@@ -4,7 +4,9 @@ extern crate std;
 
 #[cfg(feature = "rand")]
 use rand_core::{Rng, SeedableRng};
-use rapidrand::{rapidrng, RapidRng};
+#[cfg(feature = "rand")]
+use rapidrand::{RapidRng};
+use rapidrand::{rapidrng};
 
 #[cfg(feature = "rand")]
 #[test]
