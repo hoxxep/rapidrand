@@ -158,12 +158,12 @@ impl TryRng for RapidRng {
 
     #[inline]
     fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(rapidrng(&mut self.state) as u32)
+        Ok(rapidrng_parallel(&mut self.state) as u32)
     }
 
     #[inline]
     fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(rapidrng(&mut self.state))
+        Ok(rapidrng_parallel(&mut self.state))
     }
 
     #[inline]
