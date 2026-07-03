@@ -126,6 +126,86 @@ fn bench_u64_workload(c: &mut Criterion) {
     g.finish();
 }
 
+/// Controlled experiments isolating why `&self`/`Cell` RNGs (e.g. turborand) can
+/// be ~2.4x slower on a single `u64` draw than `&mut` RNGs, despite identical
+/// mixing math. All four run the same `rapidrng` arithmetic; only the state
+/// write-back pattern differs. Findings:
+/// * `mut_store_before`  — `&mut` state, stored before the mix → register-carried, fast.
+/// * `mut_store_after`   — `&mut` state, stored after the mix → register-carried,  fast.
+/// * `cell_store_before` — `Cell` state, stored before the mix → register-carried, fast.
+/// * `cell_store_after`  — `Cell` state, stored after the mix  → memory-carried,   slow.
+///
+/// The slow case is the only one where the compiler cannot keep state in a
+/// register, so the state recurrence routes through store→load forwarding.
+///
+/// `mut_store_before` represents rapidrand; `cell_store_after` represents turborand.
+fn bench_writeback_workload(c: &mut Criterion) {
+    const ADD: u64 = 0x2d358dccaa6c78a5;
+    const XOR: u64 = 0x8bb84b93962eacc9;
+    #[inline(always)]
+    fn mix(a: u64, b: u64) -> u64 {
+        let r = (a as u128).wrapping_mul(b as u128);
+        (r as u64) ^ (r >> 64) as u64
+    }
+
+    let mut g = c.benchmark_group("writeback");
+    g.throughput(Throughput::Bytes(size_of::<u64>() as u64));
+
+    // &self + Cell, store AFTER the mix (turborand's effective pattern).
+    g.bench_function("cell_store_after", |b| {
+        let state = core::cell::Cell::new(SEED);
+        b.iter(|| {
+            let s = state.get().wrapping_add(ADD);
+            let r = mix(s, s ^ XOR);
+            state.set(s);
+            r
+        })
+    });
+
+    // &self + Cell, store BEFORE the mix. Same Cell, different store order.
+    g.bench_function("cell_store_before", |b| {
+        let state = core::cell::Cell::new(SEED);
+        b.iter(|| {
+            let s = state.get().wrapping_add(ADD);
+            state.set(s);
+            mix(s, s ^ XOR)
+        })
+    });
+
+    // &mut local (register-carried state, like rapidrand), store AFTER the mix.
+    g.bench_function("mut_store_after", |b| {
+        let mut state = SEED;
+        b.iter(|| {
+            let s = state.wrapping_add(ADD);
+            let r = mix(s, s ^ XOR);
+            state = s;
+            r
+        })
+    });
+
+    // &mut local (register-carried state, like rapidrand), store BEFORE the mix (like rapidrand)
+    g.bench_function("mut_store_before", |b| {
+        let mut state = SEED;
+        b.iter(|| {
+            state = state.wrapping_add(ADD);
+            let r = mix(state, state ^ XOR);
+            r
+        })
+    });
+
+    // &mut local increment and store AFTER the mix, simply as an experiment.
+    g.bench_function("mut_inc_and_store_after", |b| {
+        let mut state = SEED;
+        b.iter(|| {
+            let r = mix(state, state ^ XOR);
+            state = state.wrapping_add(ADD);
+            r
+        })
+    });
+
+    g.finish();
+}
+
 fn bench_u32_workload(c: &mut Criterion) {
     let mut g = c.benchmark_group("u32");
     g.throughput(Throughput::Bytes(size_of::<u32>() as u64));
@@ -192,6 +272,7 @@ fn benches(c: &mut Criterion) {
     bench_u64_workload(c);
     bench_u32_workload(c);
     bench_fill_workload(c);
+    bench_writeback_workload(c);
 }
 
 criterion_group!(rng, benches);
