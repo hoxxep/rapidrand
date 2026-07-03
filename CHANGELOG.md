@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 (20260703)
+
+### Changes
+- Simplify the README benchmark table.
+
 ## 0.1.1 (20260703)
 
 ### Changes
