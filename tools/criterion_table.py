@@ -30,7 +30,7 @@ GROUPS = [("u64", 8), ("u32", 4), ("fill", None)]
 
 # Bench function id -> what the row measures. Also fixes the row order for ties.
 CRATES = {
-    "rapidrand": "[rapidrand](https://crates.io/crates/rapidrand) `RapidRng`",
+    "rapidrand": "**[rapidrand](https://crates.io/crates/rapidrand) `RapidRng`**",
     "fastrand": "[fastrand](https://crates.io/crates/fastrand) `Rng`",
     "nanorand_wyrand": "[nanorand](https://crates.io/crates/nanorand) `WyRand`",
     "turborand": "[turborand](https://crates.io/crates/turborand) `Rng`",
@@ -115,15 +115,13 @@ def main() -> None:
                     cells.append(fmt_ns(mean_ns * word / tp_bytes))
                 else:
                     cells.append(fmt_gbps(tp_bytes / mean_ns))
-        label = f"`{name}`"
-        if name.startswith("rapidrand"):
-            label = f"**{label}**"
-        if name == "nanorand_wyrand":
-            label = "`nanorand`"
-        rows.append([label, *cells, CRATES.get(name, "")])
 
-    headers = ["RNG", "`u64`", "`u32`", f"fill {fill_bytes / 1024:g} KiB", "Notes"]
-    align = ("left", "right", "right", "right", "left")
+        if name not in CRATES:
+            continue
+        rows.append([CRATES.get(name, ""), *cells])
+
+    headers = ["RNG", "`u64`", "`u32`", f"fill {fill_bytes / 1024:g} KiB"]
+    align = ("left", "right", "right", "right")
     # "pipe" (not "github") emits the `---:` alignment markers GitHub renders.
     print(tabulate(rows, headers=headers, tablefmt="pipe", colalign=align))
 

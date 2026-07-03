@@ -12,20 +12,20 @@ An extremely fast pseudo-random number generator in rust. Using the [rapidhash](
 
 Single-threaded criterion benchmarks from `rapidrand-bench` on an M1 Max. Comparing one `u64` draw, one `u32` draw, and filling a 1 KiB byte buffer (lower ns is better, higher GB/s is better).
 
-| RNG             |    `u64` |   `u32` |   fill 1 KiB | Notes                                                                      |
-|:----------------|---------:|--------:|-------------:|:---------------------------------------------------------------------------|
-| **`rapidrand`** |  0.52 ns | 0.51 ns |   21.67 GB/s | [rapidrand](https://crates.io/crates/rapidrand) `RapidRng`                 |
-| `fastrand`      |  0.51 ns | 0.51 ns |   21.49 GB/s | [fastrand](https://crates.io/crates/fastrand) `Rng`                        |
-| `turborand`     |  1.25 ns | 0.50 ns |   21.56 GB/s | [turborand](https://crates.io/crates/turborand) `Rng`                      |
-| `nanorand`      |  0.51 ns | 0.51 ns |    3.57 GB/s | [nanorand](https://crates.io/crates/nanorand) `WyRand`                     |
-| `rand_small`    |  1.13 ns | 1.20 ns |    7.05 GB/s | [rand](https://crates.io/crates/rand) `SmallRng`                           |
-| `xoshiro256++`  |  1.14 ns | 1.19 ns |    7.04 GB/s | [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256PlusPlus` |
-| `xoshiro256**`  |  1.30 ns | 1.37 ns |    5.84 GB/s | [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256StarStar` |
-| `pcg32`         |  2.06 ns | 1.02 ns |    3.93 GB/s | [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg32`                      |
-| `pcg64`         |  1.64 ns | 1.65 ns |    4.81 GB/s | [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg64`                      |
-| `rand_std`      |  4.11 ns | 2.26 ns |    2.02 GB/s | [rand](https://crates.io/crates/rand) `StdRng` (ChaCha12)                  |
-| `chacha8`       |  5.86 ns | 3.04 ns |    1.45 GB/s | [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha8Rng`           |
-| `chacha20`      | 13.24 ns | 6.70 ns |    0.62 GB/s | [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha20Rng`          |
+| RNG                                                                        |    `u64` |   `u32` |   fill 1 KiB |
+|:---------------------------------------------------------------------------|---------:|--------:|-------------:|
+| **[rapidrand](https://crates.io/crates/rapidrand) `RapidRng`**             |  0.51 ns | 0.51 ns |   21.67 GB/s |
+| [fastrand](https://crates.io/crates/fastrand) `Rng`                        |  0.51 ns | 0.52 ns |   21.49 GB/s |
+| [turborand](https://crates.io/crates/turborand) `Rng`                      |  1.25 ns | 0.51 ns |   21.56 GB/s |
+| [nanorand](https://crates.io/crates/nanorand) `WyRand`                     |  0.51 ns | 0.51 ns |    3.57 GB/s |
+| [rand](https://crates.io/crates/rand) `SmallRng`                           |  1.13 ns | 1.20 ns |    7.05 GB/s |
+| [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256PlusPlus` |  1.14 ns | 1.19 ns |    7.04 GB/s |
+| [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256StarStar` |  1.30 ns | 1.37 ns |    5.84 GB/s |
+| [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg32`                      |  2.06 ns | 1.02 ns |    3.93 GB/s |
+| [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg64`                      |  1.64 ns | 1.65 ns |    4.81 GB/s |
+| [rand](https://crates.io/crates/rand) `StdRng` (ChaCha12)                  |  4.11 ns | 2.26 ns |    2.02 GB/s |
+| [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha8Rng`           |  5.86 ns | 3.04 ns |    1.45 GB/s |
+| [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha20Rng`          | 13.24 ns | 6.70 ns |    0.62 GB/s |
 
 ## Usage
 
