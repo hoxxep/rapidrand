@@ -18,7 +18,7 @@ use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main};
 use rand_core::SeedableRng;
 
-use rapidrand::{RapidRng, rapidrng, rapidrng_single};
+use rapidrand::{RapidRng, rapidrng, rapidrng_single, rapidrng_chain, rapidrng_parallel};
 
 /// Deterministic seed so every run measures the same work.
 const SEED: u64 = 0x1234_5678_9abc_def0;
@@ -102,6 +102,18 @@ fn bench_u64_workload(c: &mut Criterion) {
     g.bench_function("rapidrand_single_raw", |b| {
         let mut seed = SEED;
         b.iter(|| rapidrng_single(&mut seed))
+    });
+
+    // Raw single-constant variant, to compare against `rapidrng`.
+    g.bench_function("rapidrand_reinerp_chain_raw", |b| {
+        let mut seed = SEED;
+        b.iter(|| rapidrng_chain(&mut seed))
+    });
+
+    // Raw single-constant variant, to compare against `rapidrng`.
+    g.bench_function("rapidrand_reinerp_parallel_raw", |b| {
+        let mut seed = SEED;
+        b.iter(|| rapidrng_parallel(&mut seed))
     });
 
     g.bench_function("fastrand", |b| {

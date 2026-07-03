@@ -51,6 +51,24 @@ pub const fn rapidrng(state: &mut u64) -> u64 {
     rapid_mix(*state, *state ^ RAPID_SECRET_XOR)
 }
 
+/// test
+#[inline(always)]
+#[must_use]
+pub const fn rapidrng_chain(state: &mut u64) -> u64 {
+    let old_state = *state;
+    *state = state.wrapping_add(RAPID_SECRET_ADD);
+    rapid_mix(old_state, *state ^ RAPID_SECRET_XOR)
+}
+
+/// test
+#[inline(always)]
+#[must_use]
+pub const fn rapidrng_parallel(state: &mut u64) -> u64 {
+    let old_state = *state;
+    *state = state.wrapping_add(RAPID_SECRET_ADD);
+    rapid_mix(*state, old_state ^ RAPID_SECRET_XOR)
+}
+
 /// Generate a pseudorandom number using rapidhash mixing, with a single constant.
 ///
 /// This PRNG is not a cryptographic random number generator.
