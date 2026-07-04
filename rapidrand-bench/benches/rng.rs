@@ -18,13 +18,66 @@ use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main};
 use rand_core::SeedableRng;
 
-use rapidrand::{RapidRng, rapidrng, rapidrng_single, rapidrng_chain, rapidrng_parallel};
+use rapidrand::{RapidRng, rapidrng};
 
 /// Deterministic seed so every run measures the same work.
 const SEED: u64 = 0x1234_5678_9abc_def0;
 
 /// Size of the buffer used by the `fill` workload.
 const FILL_BYTES: usize = 1024;
+
+// ---------------------------------------------------------------------------
+// wyrand-family constructions, reimplemented locally so we can benchmark them
+// side by side even though `rapidrand` only ships the `wyranda` variant
+// (exported as [`rapidrng`], identical to `wyranda_parallel` below).
+//
+// All four share the same Weyl counter and the same folded multiply, differing
+// only in the output filter — so this group demonstrates that the stronger
+// `wyranda` construction costs nothing over base `wyrand`. See the coverage
+// analysis in `rapidrand/tests/exhaustive.rs` for what "stronger" means.
+// ---------------------------------------------------------------------------
+
+/// Rapidhash V1 secrets (odd increment guarantees a full 2^64 period).
+const ADD: u64 = 0x2d358dccaa6c78a5;
+const XOR: u64 = 0x8bb84b93962eacc9;
+
+/// Folded 64-bit widening multiply, matching `rapidhash`'s `rapid_mix`.
+#[inline(always)]
+fn mix(a: u64, b: u64) -> u64 {
+    let r = (a as u128).wrapping_mul(b as u128);
+    (r as u64) ^ (r >> 64) as u64
+}
+
+/// Original two-constant wyrand: `mix(state, state ^ XOR)`. Symmetric, ~39.3% coverage.
+#[inline(always)]
+fn wyrand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(ADD);
+    mix(*state, *state ^ XOR)
+}
+
+/// Single-constant w1rand: reuses `ADD` as the xor secret. Symmetric, plus consecutive repeats.
+#[inline(always)]
+fn w1rand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(ADD);
+    mix(*state, *state ^ ADD)
+}
+
+/// reinerp's chain variant: `mix(old, new ^ XOR)`. Asymmetric, ~63.2% coverage.
+#[inline(always)]
+fn wyranda_chain(state: &mut u64) -> u64 {
+    let old = *state;
+    *state = state.wrapping_add(ADD);
+    mix(old, *state ^ XOR)
+}
+
+/// reinerp's parallel variant: `mix(new, old ^ XOR)`. Asymmetric, ~63.2% coverage. Shipped as
+/// `rapidrng`.
+#[inline(always)]
+fn wyranda_parallel(state: &mut u64) -> u64 {
+    let old = *state;
+    *state = state.wrapping_add(ADD);
+    mix(*state, old ^ XOR)
+}
 
 // ---------------------------------------------------------------------------
 // Per-workload helpers for any generator implementing `rand_core::Rng`.
@@ -92,28 +145,29 @@ fn bench_u64_workload(c: &mut Criterion) {
     let mut g = c.benchmark_group("u64");
     g.throughput(Throughput::Bytes(size_of::<u64>() as u64));
 
-    // Raw rapidrand function, as a dependency-free baseline.
+    // Shipped rapidrand function (the wyranda construction), as a dependency-free baseline.
     g.bench_function("rapidrand_raw", |b| {
         let mut seed = SEED;
         b.iter(|| rapidrng(&mut seed))
     });
 
-    // Raw single-constant variant, to compare against `rapidrng`.
-    g.bench_function("rapidrand_single_raw", |b| {
+    // The wyrand-family constructions reimplemented locally, to confirm they are all the same speed
+    // (only their output quality differs — see the module comment above).
+    g.bench_function("wyrand", |b| {
         let mut seed = SEED;
-        b.iter(|| rapidrng_single(&mut seed))
+        b.iter(|| wyrand(&mut seed))
     });
-
-    // Raw single-constant variant, to compare against `rapidrng`.
-    g.bench_function("rapidrand_reinerp_chain_raw", |b| {
+    g.bench_function("w1rand", |b| {
         let mut seed = SEED;
-        b.iter(|| rapidrng_chain(&mut seed))
+        b.iter(|| w1rand(&mut seed))
     });
-
-    // Raw single-constant variant, to compare against `rapidrng`.
-    g.bench_function("rapidrand_reinerp_parallel_raw", |b| {
+    g.bench_function("wyranda_chain", |b| {
         let mut seed = SEED;
-        b.iter(|| rapidrng_parallel(&mut seed))
+        b.iter(|| wyranda_chain(&mut seed))
+    });
+    g.bench_function("wyranda_parallel", |b| {
+        let mut seed = SEED;
+        b.iter(|| wyranda_parallel(&mut seed))
     });
 
     g.bench_function("fastrand", |b| {

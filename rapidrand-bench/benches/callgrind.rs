@@ -20,7 +20,7 @@ use std::hint::black_box;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use rand_core::SeedableRng;
 
-use rapidrand::{RapidRng, rapidrng, rapidrng_single};
+use rapidrand::{RapidRng, rapidrng};
 
 /// Deterministic seed so every run measures the same work.
 const SEED: u64 = 0x1234_5678_9abc_def0;
@@ -32,6 +32,48 @@ const FILL_BYTES: usize = 1024;
 /// but looping amortises the fixed per-benchmark harness overhead so the reported count tracks the
 /// marginal per-draw cost.
 const ITERS: usize = 1024;
+
+// wyrand-family constructions, reimplemented locally so their instruction counts can be tracked
+// side by side. `rapidrand` ships only `wyranda` (as [`rapidrng`], identical to `wyranda_parallel`);
+// the others exist here purely for comparison. Only the output filter differs between them.
+const ADD: u64 = 0x2d358dccaa6c78a5;
+const XOR: u64 = 0x8bb84b93962eacc9;
+
+#[inline(always)]
+fn mix(a: u64, b: u64) -> u64 {
+    let r = (a as u128).wrapping_mul(b as u128);
+    (r as u64) ^ (r >> 64) as u64
+}
+
+/// Original two-constant wyrand: `mix(state, state ^ XOR)`.
+#[inline(always)]
+fn wyrand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(ADD);
+    mix(*state, *state ^ XOR)
+}
+
+/// Single-constant w1rand: reuses `ADD` as the xor secret.
+#[inline(always)]
+fn w1rand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(ADD);
+    mix(*state, *state ^ ADD)
+}
+
+/// reinerp's chain variant: `mix(old, new ^ XOR)`.
+#[inline(always)]
+fn wyranda_chain(state: &mut u64) -> u64 {
+    let old = *state;
+    *state = state.wrapping_add(ADD);
+    mix(old, *state ^ XOR)
+}
+
+/// reinerp's parallel variant: `mix(new, old ^ XOR)`. Shipped as `rapidrng`.
+#[inline(always)]
+fn wyranda_parallel(state: &mut u64) -> u64 {
+    let old = *state;
+    *state = state.wrapping_add(ADD);
+    mix(*state, old ^ XOR)
+}
 
 // ---------------------------------------------------------------------------
 // Generator constructors — each is called in a `#[bench]` argument expression, which
@@ -102,7 +144,8 @@ fn u64_rand_core<R: rand_core::Rng>(mut rng: R) -> u64 {
     acc
 }
 
-// Raw `rapidrng` function, as a dependency-free baseline with no trait dispatch.
+// Raw `rapidrng` function (the shipped wyranda construction), as a dependency-free baseline with no
+// trait dispatch.
 #[library_benchmark]
 fn u64_rapidrand_raw() -> u64 {
     let mut seed = black_box(SEED);
@@ -113,13 +156,43 @@ fn u64_rapidrand_raw() -> u64 {
     acc
 }
 
-// Raw single-constant variant, to track its instruction count against `rapidrng`.
+// The wyrand-family constructions, to track that they all cost the same instruction count.
 #[library_benchmark]
-fn u64_rapidrand_single_raw() -> u64 {
+fn u64_wyrand() -> u64 {
     let mut seed = black_box(SEED);
     let mut acc = 0u64;
     for _ in 0..ITERS {
-        acc ^= black_box(rapidrng_single(&mut seed));
+        acc ^= black_box(wyrand(&mut seed));
+    }
+    acc
+}
+
+#[library_benchmark]
+fn u64_w1rand() -> u64 {
+    let mut seed = black_box(SEED);
+    let mut acc = 0u64;
+    for _ in 0..ITERS {
+        acc ^= black_box(w1rand(&mut seed));
+    }
+    acc
+}
+
+#[library_benchmark]
+fn u64_wyranda_chain() -> u64 {
+    let mut seed = black_box(SEED);
+    let mut acc = 0u64;
+    for _ in 0..ITERS {
+        acc ^= black_box(wyranda_chain(&mut seed));
+    }
+    acc
+}
+
+#[library_benchmark]
+fn u64_wyranda_parallel() -> u64 {
+    let mut seed = black_box(SEED);
+    let mut acc = 0u64;
+    for _ in 0..ITERS {
+        acc ^= black_box(wyranda_parallel(&mut seed));
     }
     acc
 }
@@ -260,8 +333,8 @@ fn fill_nanorand(mut rng: nanorand::WyRand) -> [u8; FILL_BYTES] {
 
 library_benchmark_group!(
     name = group_u64;
-    benchmarks = u64_rand_core, u64_rapidrand_raw, u64_rapidrand_single_raw, u64_fastrand,
-        u64_turborand, u64_nanorand
+    benchmarks = u64_rand_core, u64_rapidrand_raw, u64_wyrand, u64_w1rand, u64_wyranda_chain,
+        u64_wyranda_parallel, u64_fastrand, u64_turborand, u64_nanorand
 );
 
 library_benchmark_group!(

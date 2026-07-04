@@ -1,76 +1,81 @@
-//! Exhaustive full-period output-space tests for the `rapidrng` variants.
+//! Exhaustive full-period output-space tests for the wyrand-family constructions behind `rapidrng`.
 //!
 //! # Why this exists
 //!
-//! `rapidrng` (like wyrand) is a Weyl sequence run through a non-bijective output filter:
+//! Every wyrand-family generator is a Weyl counter run through a non-bijective output filter:
 //!
 //! ```text
-//! state += ADD;              // ADD is odd  =>  bijection: cycles through all 2^n states
+//! state += ADD;                            // ADD is odd => full-period cycle over all 2^n states
 //! output = fold_mul(state, state ^ XOR);   // non-bijective mixing of the state
 //! ```
 //!
-//! Because the state increment is a full-period permutation, over one complete period the
-//! *input* to the output filter takes every one of the `2^n` values exactly once. The multiset
-//! of outputs is therefore precisely the image multiset of the output filter applied to a uniform
-//! domain — which is exactly the object a collision test probes.
+//! Because the increment is a full-period permutation, over one complete period the *input* to the
+//! output filter takes every one of the `2^n` values exactly once. The multiset of outputs is
+//! therefore exactly the image multiset of the filter over a uniform domain — the object a collision
+//! test probes. For a *random* function `f: [N] -> [N]` the preimage counts are Poisson(1), so:
 //!
-//! For a *random* function `f: [N] -> [N]` the preimage counts are Poisson(1) distributed, so:
-//!
-//! * fraction of the output space that is *hit* (>= 1 preimage): `1 - 1/e ≈ 63.2%`
+//! * fraction of the output space *hit* (>= 1 preimage): `1 - 1/e ≈ 63.2%`
 //! * fraction with exactly `k` preimages: `e^-1 / k!`
 //!
 //! This is the "~63% of the output space" claim from
 //! <https://github.com/wangyi-fudan/wyhash/issues/130#issuecomment-4835746792> (reinerp).
 //!
-//! ## The symmetry defect
+//! ## The symmetry defect (wyrand / w1rand)
 //!
-//! `fold_mul` is commutative (it folds the 128-bit product `a * b`, and `a*b == b*a`). The main
-//! filter `f(x) = fold_mul(x, x ^ XOR)` therefore satisfies
+//! `fold_mul` is commutative (it folds the 128-bit product `a*b == b*a`), so the plain wyrand filter
+//! `f(x) = fold_mul(x, x ^ XOR)` satisfies `f(x ^ XOR) = f(x)`. Since `x -> x ^ XOR` is a
+//! fixed-point-free involution (`XOR != 0`), every output has an *even* number of preimages and at
+//! most `N/2` values are reachable. Such a 2-to-1 filter covers only `1 - e^(-1/2) ≈ 39.3%`. Both
+//! `wyrand` (two constants) and `w1rand` (one constant) carry this defect. This is the construction
+//! shipped by `fastrand`, `nanorand`, and `turborand`.
+//!
+//! ## reinerp's fix — wyranda (chain / parallel)
+//!
+//! reinerp's variants draw the two operands from the two states the counter already holds — the old
+//! state `state[0]` and the new state `state[1] = state[0] + ADD` — instead of from one state:
 //!
 //! ```text
-//! f(x ^ XOR) = fold_mul(x ^ XOR, x) = fold_mul(x, x ^ XOR) = f(x)
+//! wyrand:   fold_mul( state[1], state[1] ^ XOR )    // both operands from the SAME state
+//! chain:    fold_mul( state[0], state[1] ^ XOR )    // un-xored = old,  xored = new
+//! parallel: fold_mul( state[1], state[0] ^ XOR )    // un-xored = new,  xored = old
 //! ```
 //!
-//! `x -> x ^ XOR` is a fixed-point-free involution (XOR != 0), so every output value has an *even*
-//! number of preimages and at most `N/2` values can be hit. A random such 2-to-1 filter covers only
-//! `1 - e^(-1/2) ≈ 39.3%`. Both [`rapidrng`] and [`rapidrng_single`] carry this defect.
-//!
-//! reinerp's fix — feed the two sides of the multiply from *different* states so the filter is no
-//! longer a commutative function of a single value — is implemented here as [`rapidrng_chain`] and
-//! [`rapidrng_parallel`]. Those recover the full `~63.2%` coverage. The default `RapidRng` uses
-//! [`rapidrng_parallel`].
+//! `wyrand` feeds both operands from `state[1]`, so they are a single value and its `^ XOR` image;
+//! the involution `x -> x ^ XOR` swaps them and leaves the product fixed, forcing the 2-to-1
+//! collapse. chain and parallel each draw one operand from `state[0]` and the other from `state[1]`,
+//! so that swap no longer maps one operand to the other — the symmetry is broken and both recover the
+//! random-function `~63.2%`. `rapidrand` ships the parallel variant as `rapidrng` (and `RapidRng`).
 //!
 //! ## Why a u16 model proves the u64 claim
 //!
-//! The `1 - 1/e` and `1 - e^(-1/2)` figures are width-independent limits (the finite-`N` correction
-//! `(1 - 1/N)^N -> e^-1` is already exact to ~5 digits at `N = 2^16`). We reimplement the exact same
-//! arithmetic over `u16`, enumerate the *entire* `2^16`-state period, and measure the real image
-//! multiset. The [`u64_model_matches_crate`] test pins the generic model to the production functions,
-//! so the u16 measurement transfers to the shipped u64 code.
+//! The `1 - 1/e` and `1 - e^(-1/2)` figures are width-independent limits (already exact to ~5 digits
+//! at `N = 2^16`). We reimplement the exact same arithmetic over `u16`, enumerate the entire
+//! `2^16`-state period, and measure the real image multiset. [`u64_model_matches_crate`] pins the
+//! parallel model to the shipped `rapidrng` at `u64`, so the u16 measurement transfers to the shipped
+//! code.
 
-use rapidrand::{rapidrng, rapidrng_chain, rapidrng_parallel, rapidrng_single};
+use rapidrand::rapidrng;
+
+/// One draw of a `u16` construction: advance the state in place and return the output.
+type Step = fn(&mut u16) -> u16;
 
 /// A narrow unsigned word we can enumerate exhaustively, carrying the same mixing arithmetic as the
-/// production `u64` generator. Implemented for `u16` (the exhaustive claims) and `u64` (the
-/// crate-equivalence cross-check).
-trait Word: Copy + Eq + std::fmt::Debug {
-    /// Number of state/output bits.
+/// production `u64` generator. Implemented for `u16` (the exhaustive measurement) and `u64` (the
+/// crate-equivalence cross-check) from one macro, so the two widths run *identical* code.
+trait Word: Copy + Eq {
     const BITS: u32;
-    /// Size of the state and output space, `2^BITS`.
     const SPACE: usize = 1 << Self::BITS;
-    /// Zero, the starting state for enumeration.
+    /// Starting state for enumeration.
     const ZERO: Self;
-    /// Odd Weyl increment (guarantees a full-period cycle). Truncated from `RAPID_SECRET_ADD`, with
-    /// the top bit kept clear so the `single`-variant repeat count is exactly `2^(zero bits)`.
+    /// Odd Weyl increment (guarantees a full-period cycle), truncated from `RAPID_SECRET_ADD`.
     const ADD: Self;
-    /// Non-zero xor secret. Truncated from `RAPID_SECRET_XOR`.
+    /// Non-zero xor secret, truncated from `RAPID_SECRET_XOR`.
     const XOR: Self;
 
-    /// Folded widening multiply: `fold(a * b)`, matching `rapid_mix` at this width.
+    /// Folded widening multiply `fold(a * b)`, matching `rapid_mix` at this width.
     fn fold_mul(a: Self, b: Self) -> Self;
     fn wadd(self, other: Self) -> Self;
     fn xor(self, other: Self) -> Self;
-    /// Index into a `SPACE`-sized tally array.
     fn index(self) -> usize;
 }
 
@@ -82,20 +87,20 @@ macro_rules! impl_word {
             const ADD: Self = $add;
             const XOR: Self = $xor;
 
-            #[inline]
+            #[inline(always)]
             fn fold_mul(a: Self, b: Self) -> Self {
                 let r = (a as $wide).wrapping_mul(b as $wide);
                 (r as Self) ^ (r >> <$ty>::BITS) as Self
             }
-            #[inline]
+            #[inline(always)]
             fn wadd(self, other: Self) -> Self {
                 self.wrapping_add(other)
             }
-            #[inline]
+            #[inline(always)]
             fn xor(self, other: Self) -> Self {
                 self ^ other
             }
-            #[inline]
+            #[inline(always)]
             fn index(self) -> usize {
                 self as usize
             }
@@ -103,211 +108,193 @@ macro_rules! impl_word {
     };
 }
 
-// Constants are truncated from the real secrets, with ADD forced odd and top-bit-clear:
+// Truncated from the real secrets (ADD forced odd, top bit clear):
 //   RAPID_SECRET_ADD = 0x2d358dccaa6c78a5   RAPID_SECRET_XOR = 0x8bb84b93962eacc9
-// u16 ADD 0x78a5 = 0b0111_1000_1010_0101 (odd, top clear, 8 zero bits -> 256 `single` repeats)
+// u16 ADD 0x78a5 has 8 zero bits -> exactly 2^8 = 256 structural `w1rand` repeats.
 impl_word!(u16, u32, 0x78a5, 0xacc9);
 impl_word!(u64, u128, 0x2d358dccaa6c78a5, 0x8bb84b93962eacc9);
 
-// The four variants, reimplemented generically. These mirror `rapidrand::lib` line-for-line; the
-// `u64_model_matches_crate` test proves the equivalence against the production functions.
+// The four wyrand-family constructions, generic over word width. `u64_model_matches_crate` proves
+// the parallel model matches the shipped `rapidrng` line-for-line at `u64`.
 
-/// `rapidrng`: symmetric single-state filter `fold(state · (state ^ XOR))`.
-fn v_main<W: Word>(state: &mut W) -> W {
+/// `wyrand`: symmetric single-state filter `fold(state · (state ^ XOR))`.
+#[inline(always)]
+fn v_wyrand<W: Word>(state: &mut W) -> W {
     *state = state.wadd(W::ADD);
     W::fold_mul(*state, state.xor(W::XOR))
 }
 
-/// `rapidrng_single`: symmetric, reuses `ADD` as the xor secret. Adds the consecutive-repeat defect.
-fn v_single<W: Word>(state: &mut W) -> W {
+/// `w1rand`: symmetric, reuses `ADD` as the xor secret (adds the consecutive-repeat defect).
+#[inline(always)]
+fn v_w1rand<W: Word>(state: &mut W) -> W {
     *state = state.wadd(W::ADD);
     W::fold_mul(*state, state.xor(W::ADD))
 }
 
-/// `rapidrng_chain` (reinerp): asymmetric, `fold(old · (new ^ XOR))`.
-fn v_chain<W: Word>(state: &mut W) -> W {
+/// `wyranda_chain` (reinerp): asymmetric, `fold(old · (new ^ XOR))`.
+#[inline(always)]
+fn v_wyranda_chain<W: Word>(state: &mut W) -> W {
     let old = *state;
     *state = state.wadd(W::ADD);
     W::fold_mul(old, state.xor(W::XOR))
 }
 
-/// `rapidrng_parallel` (reinerp): asymmetric, `fold(new · (old ^ XOR))`. The default `RapidRng`.
-fn v_parallel<W: Word>(state: &mut W) -> W {
+/// `wyranda_parallel` (reinerp): asymmetric, `fold(new · (old ^ XOR))`. Shipped as `rapidrng`.
+#[inline(always)]
+fn v_wyranda_parallel<W: Word>(state: &mut W) -> W {
     let old = *state;
     *state = state.wadd(W::ADD);
     W::fold_mul(*state, old.xor(W::XOR))
 }
 
-/// Statistics gathered by walking one full `2^BITS`-state period.
+/// Measurements taken by walking one full `2^BITS`-state period.
 struct Stats {
-    space: usize,
-    /// `preimages[v]` = number of times output value `v` was produced over the period.
+    /// `preimages[v]` = how many times output value `v` was produced over the period.
     preimages: Vec<u32>,
-    /// Number of adjacent output pairs that were exactly equal (`out[i] == out[i+1]`).
-    adjacent_repeats: usize,
+    /// Adjacent equal outputs `out[i] == out[i+1]` over the *cyclic* period (the last output is
+    /// adjacent to the first, since the generator wraps back to its start).
+    repeats: usize,
 }
 
 impl Stats {
-    /// Enumerate the entire period of `step`, starting from `ZERO`.
     fn collect<W: Word>(step: impl Fn(&mut W) -> W) -> Stats {
         let mut preimages = vec![0u32; W::SPACE];
         let mut state = W::ZERO;
-        let mut prev: Option<W> = None;
-        let mut adjacent_repeats = 0usize;
+        let mut repeats = 0;
+        let (mut first, mut prev) = (None, None);
         for _ in 0..W::SPACE {
             let out = step(&mut state);
             preimages[out.index()] += 1;
             if prev == Some(out) {
-                adjacent_repeats += 1;
+                repeats += 1;
             }
+            first = first.or(Some(out));
             prev = Some(out);
         }
-        Stats { space: W::SPACE, preimages, adjacent_repeats }
+        // Close the cycle: the period wraps, so the final output neighbours the first.
+        if prev == first {
+            repeats += 1;
+        }
+        Stats { preimages, repeats }
     }
 
     /// Fraction of the output space with at least one preimage (the "coverage" claim).
     fn coverage(&self) -> f64 {
         let hit = self.preimages.iter().filter(|&&c| c > 0).count();
-        hit as f64 / self.space as f64
+        hit as f64 / self.preimages.len() as f64
     }
 
     /// Fraction of the output space whose preimage count is exactly `k`.
     fn fraction_with(&self, k: u32) -> f64 {
         let n = self.preimages.iter().filter(|&&c| c == k).count();
-        n as f64 / self.space as f64
+        n as f64 / self.preimages.len() as f64
     }
 
-    /// Count of output values reached an *odd* number of times. Must be 0 for the symmetric filters
-    /// (their fixed-point-free 2-to-1 symmetry forces every preimage count even).
+    /// Output values reached an *odd* number of times. Zero iff the filter is a fixed-point-free
+    /// 2-to-1 map (the symmetric variants); positive once that symmetry is broken.
     fn odd_preimage_values(&self) -> usize {
         self.preimages.iter().filter(|&&c| c % 2 == 1).count()
     }
 }
 
-/// `1 - 1/e`: coverage of a random function (the `chain`/`parallel` variants).
+/// `1 - 1/e`: coverage of a random function (wyranda chain / parallel).
 const RANDOM_COVERAGE: f64 = 0.6321205588285577;
-/// `1 - e^(-1/2)`: coverage of a random fixed-point-free 2-to-1 filter (the `main`/`single`
-/// variants, limited by the `f(x) == f(x ^ XOR)` symmetry).
+/// `1 - e^(-1/2)`: coverage of a random fixed-point-free 2-to-1 filter (wyrand / w1rand).
 const SYMMETRIC_COVERAGE: f64 = 0.3934693402873666;
 
 fn assert_close(what: &str, got: f64, want: f64, tol: f64) {
+    assert!((got - want).abs() <= tol, "{what}: got {got:.4}, expected {want:.4} (tol {tol})");
+}
+
+/// The symmetric constructions (`wyrand`, `w1rand`) can never reach the `~63%` a good RNG should:
+/// `f(x) == f(x ^ XOR)` forces every preimage count even and collapses coverage to `~39.3%`.
+#[test]
+fn symmetric_variants_undercover() {
+    for (name, step) in [("wyrand", v_wyrand::<u16> as Step), ("w1rand", v_w1rand)] {
+        let stats = Stats::collect(step);
+        assert_eq!(stats.odd_preimage_values(), 0, "{name}: 2-to-1 symmetry should force all counts even");
+        assert_close(&format!("{name} coverage"), stats.coverage(), SYMMETRIC_COVERAGE, 0.02);
+    }
+}
+
+/// `w1rand` reuses `ADD` as the xor secret, so `out[i] == out[i+1]` whenever the post-increment state
+/// shares no bits with `ADD` (`state & ADD == 0`): exactly `2^z` such states, where `z` is the number
+/// of zero bits in `ADD`. A handful of coincidental repeats sit on top. The two-constant `wyrand`
+/// filter has no such states and never repeats.
+#[test]
+fn w1rand_variant_has_structural_repeats() {
+    let structural = 1usize << u16::ADD.count_zeros();
+    assert_eq!(structural, 256, "u16 ADD 0x78a5 has 8 zero bits");
+
+    let w1rand = Stats::collect::<u16>(v_w1rand).repeats;
     assert!(
-        (got - want).abs() <= tol,
-        "{what}: got {got:.4}, expected {want:.4} (tol {tol})"
+        (structural..structural + 16).contains(&w1rand),
+        "w1rand repeats {w1rand} should be the structural {structural} plus a few coincidental",
     );
+    assert_eq!(Stats::collect::<u16>(v_wyrand).repeats, 0, "wyrand should never repeat consecutively");
 }
 
-// --- The symmetric (defective) variants: rapidrng and rapidrng_single ---
-
-/// The main `rapidrng` filter is symmetric, so it can never reach the `~63%` a good RNG should:
-/// its `f(x) == f(x ^ XOR)` symmetry forces every preimage count even and collapses coverage to
-/// `~39.3%`.
+/// reinerp's wyranda variants break commutativity and recover random-function statistics: ~63%
+/// coverage, Poisson(1) preimage counts, odd preimage counts present, and no structural repeats.
 #[test]
-fn main_variant_is_symmetric_and_undercovers() {
-    let stats = Stats::collect::<u16>(v_main);
-    // Structural: the 2-to-1 symmetry forces every preimage count to be even. Exact, no slack.
-    assert_eq!(
-        stats.odd_preimage_values(),
-        0,
-        "rapidrng: symmetry f(x)=f(x^XOR) should make every preimage count even"
-    );
-    // Coverage collapses to ~39.3%, well under the ~63% a random filter reaches.
-    assert_close("rapidrng coverage", stats.coverage(), SYMMETRIC_COVERAGE, 0.02);
-}
-
-/// `rapidrng_single` shares the symmetry defect *and* adds exact consecutive repeats: `ADD = 0x78a5`
-/// has 8 zero bits, so exactly `2^8 = 256` adjacent output pairs are identical over the period.
-#[test]
-fn single_variant_is_symmetric_and_repeats() {
-    let stats = Stats::collect::<u16>(v_single);
-    assert_eq!(stats.odd_preimage_values(), 0, "single should stay symmetric");
-    assert_eq!(stats.adjacent_repeats, 1 << u16::ADD.count_zeros(), "single repeat count");
-    assert_close("single coverage", stats.coverage(), SYMMETRIC_COVERAGE, 0.02);
-}
-
-// --- The asymmetric (fixed) variants: rapidrng_chain and rapidrng_parallel ---
-
-/// reinerp's variants break commutativity and recover random-function statistics: ~63% coverage,
-/// Poisson(1) preimage counts, odd preimage counts present, and no exact consecutive repeats.
-#[test]
-fn reinerp_variants_recover_random_coverage() {
-    for (name, step) in
-        [("chain", v_chain::<u16> as fn(&mut u16) -> u16), ("parallel", v_parallel::<u16>)]
-    {
+fn wyranda_variants_recover_random_statistics() {
+    let inv_e = std::f64::consts::E.recip();
+    let variants =
+        [("chain", v_wyranda_chain::<u16> as Step), ("parallel", v_wyranda_parallel)];
+    for (name, step) in variants {
         let stats = Stats::collect(step);
         assert_close(&format!("{name} coverage"), stats.coverage(), RANDOM_COVERAGE, 0.02);
-        // Poisson(1): fraction with exactly one preimage is also 1/e ≈ 0.368.
-        assert_close(
-            &format!("{name} single-preimage fraction"),
-            stats.fraction_with(1),
-            std::f64::consts::E.recip(),
-            0.03,
-        );
-        // The symmetry is gone: odd preimage counts now exist (all would be even if symmetric).
-        assert!(stats.odd_preimage_values() > 0, "{name}: asymmetric filter should have odd counts");
-        // The `single` repeat defect is absent: adjacent repeats stay at random-chance level (~1
-        // expected for a random function over 2^16), far below `single`'s structural 256.
-        assert!(stats.adjacent_repeats < 16, "{name}: repeats {} above chance", stats.adjacent_repeats);
-    }
-}
-
-/// The u16 asymmetric preimage histogram should track Poisson(1): `e^-1 / k!`.
-#[test]
-fn asymmetric_preimage_histogram_is_poisson() {
-    let stats = Stats::collect::<u16>(v_parallel);
-    let inv_e = std::f64::consts::E.recip();
-    // e^-1/k! for k = 0,1,2,3,4.
-    let expected = [inv_e, inv_e, inv_e / 2.0, inv_e / 6.0, inv_e / 24.0];
-    for (k, &want) in expected.iter().enumerate() {
-        assert_close(
-            &format!("parallel P(preimages = {k})"),
-            stats.fraction_with(k as u32),
-            want,
-            0.02,
-        );
-    }
-}
-
-/// Pin the generic narrow-word model to the real crate functions at `u64`: the arithmetic tested at
-/// `u16` is bit-identical to what ships. If this passes, the small-width claims transfer.
-#[test]
-fn u64_model_matches_crate() {
-    // A spread of seeds including edge cases.
-    let seeds = [0u64, 1, 2, 42, u64::MAX, u64::MAX - 1, 0x2d358dccaa6c78a5, 0x8bb84b93962eacc9];
-    let cases: &[(&str, fn(&mut u64) -> u64, fn(&mut u64) -> u64)] = &[
-        ("main", v_main, rapidrng),
-        ("single", v_single, rapidrng_single),
-        ("chain", v_chain, rapidrng_chain),
-        ("parallel", v_parallel, rapidrng_parallel),
-    ];
-    for &(name, model, crate_fn) in cases {
-        for seed in seeds {
-            let (mut a, mut b) = (seed, seed);
-            for _ in 0..64 {
-                assert_eq!(model(&mut a), crate_fn(&mut b), "{name} mismatch (seed {seed:#x})");
-            }
+        assert!(stats.odd_preimage_values() > 0, "{name}: broken symmetry should produce odd counts");
+        assert!(stats.repeats < 16, "{name}: {} repeats is above chance", stats.repeats);
+        // Preimage histogram follows Poisson(1): P(k preimages) = e^-1 / k!.
+        for (k, want) in [inv_e, inv_e, inv_e / 2.0, inv_e / 6.0].into_iter().enumerate() {
+            assert_close(&format!("{name} P(preimages={k})"), stats.fraction_with(k as u32), want, 0.02);
         }
     }
 }
 
-/// Human-readable summary of every variant. Run with `--nocapture` to see the table.
+/// Pin the parallel model to the real shipped `rapidrng` at `u64`: the arithmetic measured at `u16`
+/// is bit-identical to what ships, so the small-width claims transfer.
+#[test]
+fn u64_model_matches_crate() {
+    let seeds = [0u64, 1, 2, 42, u64::MAX, u64::MAX - 1, 0x2d358dccaa6c78a5, 0x8bb84b93962eacc9];
+    for seed in seeds {
+        let (mut a, mut b) = (seed, seed);
+        for _ in 0..64 {
+            assert_eq!(v_wyranda_parallel(&mut a), rapidrng(&mut b), "mismatch (seed {seed:#x})");
+        }
+    }
+}
+
+/// Human-readable summary of every construction over the full `2^16` period. Run with `--nocapture`.
 #[test]
 fn print_coverage_summary() {
-    println!("\n{:<10} {:>10} {:>12} {:>10}", "variant", "coverage", "odd-preimg", "repeats");
-    let rows: &[(&str, fn(&mut u16) -> u16)] =
-        &[("main", v_main), ("single", v_single), ("chain", v_chain), ("parallel", v_parallel)];
-    for &(name, step) in rows {
+    // What each column means, measured over one full period (every state visited exactly once):
+    //   coverage    % of the 2^16 output values produced at least once.
+    //               random function -> 1-1/e = 63.2%;  symmetric 2-to-1 filter -> 1-e^-1/2 = 39.3%
+    //   odd-preimg  output values produced an ODD number of times.
+    //               0 proves the filter is 2-to-1 (f(x)=f(x^XOR)); >0 proves that symmetry is broken.
+    //   repeats     adjacent equal outputs out[i]==out[i+1] over the cyclic period (incl. last->first).
+    //               'w1rand' has a structural 2^z=256 (z = zero bits of ADD); others only chance.
+    let rows: &[(&str, &str, Step)] = &[
+        ("wyrand", "symmetric", v_wyrand),
+        ("w1rand", "symmetric", v_w1rand),
+        ("wyranda_chain", "asymmetric", v_wyranda_chain),
+        ("wyranda_parallel", "asymmetric", v_wyranda_parallel),
+    ];
+    println!("\n{:<18} {:<11} {:>9} {:>11} {:>8}", "construction", "kind", "coverage", "odd-preimg", "repeats");
+    for &(name, kind, step) in rows {
         let s = Stats::collect(step);
         println!(
-            "{name:<10} {:>9.2}% {:>12} {:>10}",
+            "{name:<18} {kind:<11} {:>8.2}% {:>11} {:>8}",
             s.coverage() * 100.0,
             s.odd_preimage_values(),
-            s.adjacent_repeats
+            s.repeats,
         );
     }
     println!(
-        "expected: symmetric(main/single) ~{:.1}%, asymmetric(chain/parallel) ~{:.1}%\n",
+        "expected coverage: symmetric ~{:.1}% (1-e^-1/2), asymmetric ~{:.1}% (1-1/e)\n",
         SYMMETRIC_COVERAGE * 100.0,
-        RANDOM_COVERAGE * 100.0
+        RANDOM_COVERAGE * 100.0,
     );
 }

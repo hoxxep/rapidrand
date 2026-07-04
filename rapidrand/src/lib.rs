@@ -29,13 +29,26 @@ const fn rapid_mix(a: u64, b: u64) -> u64 {
     (r as u64) ^ (r >> 64) as u64
 }
 
-/// Generate a pseudorandom number using rapidhash mixing.
+/// Generate a pseudorandom `u64` and advance `state`.
 ///
 /// This PRNG is not a cryptographic random number generator.
 ///
-/// This implementation is equivalent in logic and performance to
-/// [wyhash::wyrand](https://github.com/wangyi-fudan/wyhash) and
-/// [fastrand](https://docs.rs/fastrand/), but uses rapidhash constants/secrets.
+/// # Why not plain wyrand?
+///
+/// `rapidrng` uses [rapidhash](https://github.com/hoxxep/rapidhash) secrets with the **wyranda**
+/// construction: a [wyrand](https://github.com/wangyi-fudan/wyhash)-family Weyl generator whose
+/// output multiply is fed from *two* consecutive counter states instead of one. This improvement
+/// was proposed by Sebastiano Vigna and Reiner Pope
+/// ([wyhash/issue#130](https://github.com/wangyi-fudan/wyhash/issues/130#issuecomment-4835746792) and
+/// [wyhash/issue#156](https://github.com/wangyi-fudan/wyhash/issues/156)).
+///
+/// Plain wyrand mixes a single state, `rapid_mix(state, state ^ XOR)`. Because `rapid_mix` is
+/// commutative and `x -> x ^ XOR` is a fixed-point-free involution, `f(x) == f(x ^ XOR)`: the output
+/// filter is exactly 2-to-1, so it can only ever reach `1 - e^(-1/2) ≈ 39.3%` of its output space,
+/// where a well-behaved generator reaches `1 - 1/e ≈ 63.2%`. wyranda multiplies the *old* state by
+/// the *new* (xored) state, which is not a commutative function of a single value; that removes the
+/// symmetry and restores the full `~63.2%` coverage at identical speed. See the crate-level docs for
+/// the full explanation and coverage table.
 ///
 /// # Example
 /// ```rust
@@ -47,72 +60,9 @@ const fn rapid_mix(a: u64, b: u64) -> u64 {
 #[inline(always)]
 #[must_use]
 pub const fn rapidrng(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(RAPID_SECRET_ADD);
-    rapid_mix(*state, *state ^ RAPID_SECRET_XOR)
-}
-
-/// test
-#[inline(always)]
-#[must_use]
-pub const fn rapidrng_chain(state: &mut u64) -> u64 {
-    let old_state = *state;
-    *state = state.wrapping_add(RAPID_SECRET_ADD);
-    rapid_mix(old_state, *state ^ RAPID_SECRET_XOR)
-}
-
-/// test
-#[inline(always)]
-#[must_use]
-pub const fn rapidrng_parallel(state: &mut u64) -> u64 {
     let old_state = *state;
     *state = state.wrapping_add(RAPID_SECRET_ADD);
     rapid_mix(*state, old_state ^ RAPID_SECRET_XOR)
-}
-
-/// Generate a pseudorandom number using rapidhash mixing, with a single constant.
-///
-/// This PRNG is not a cryptographic random number generator.
-///
-/// Prefer [`rapidrng`]: it is equally fast and avoids the statistical defect described below.
-///
-/// # Performance
-///
-/// This uses a single constant instead of two. In hot loops the compiler hoists both constants
-/// into registers and the generated inner loop is identical to [`rapidrng`] (instruction-for-
-/// instruction on aarch64), so wall-time performance is the same. The single constant only helps
-/// at cold call sites — one fewer 64-bit constant to materialise (a 10-byte `movabs` on x86-64,
-/// `mov` + 3×`movk` on aarch64) — and frees one register under register pressure.
-///
-/// This implementation is equivalent in logic and performance to
-/// [wyhash::w1rand](https://github.com/wangyi-fudan/wyhash).
-///
-/// # Statistical weakness: consecutive repeats
-///
-/// Reusing the increment constant as the xor constant creates exact consecutive repeats. Whenever
-/// the post-increment state satisfies `state & RAPID_SECRET_ADD == 0`, the next increment carries
-/// nowhere, so `state + RAPID_SECRET_ADD == state ^ RAPID_SECRET_ADD`. The folded multiply is
-/// commutative in its arguments, so the *next* output exactly equals the current one.
-///
-/// The number of repeat states is 2^z where z is the number of zero bits in the constant, doubled
-/// if its top bit is set (the wrapping add discards the carry out of bit 63, freeing that state
-/// bit). `RAPID_SECRET_ADD` has 32 set bits and a clear top bit, so exactly 2^32 of the 2^64
-/// states trigger this: an identical adjacent output pair once per ~2^32 draws on average — a few
-/// seconds of continuous generation — where a truly random stream would produce one every 2^64
-/// draws. A different constant cannot avoid this: good multiplicative constants have roughly half
-/// their bits set, pinning the rate near 2^-32. Upstream `w1rand` shares the defect (33 set bits,
-/// top bit set: also exactly 2^32 repeat states). PractRand and BigCrush do not test adjacent-word
-/// equality and pass this generator regardless, but a dedicated test detects the bias within
-/// seconds, and any use that treats consecutive outputs as unique (e.g. forming 128-bit values
-/// from adjacent draws) inherits it.
-///
-/// [`rapidrng`]'s two-constant pair has zero states satisfying `state + RAPID_SECRET_ADD ==
-/// state ^ RAPID_SECRET_XOR` (the required carry pattern is inconsistent), so it never repeats
-/// consecutively.
-#[inline(always)]
-#[must_use]
-pub const fn rapidrng_single(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(RAPID_SECRET_ADD);
-    rapid_mix(*state, *state ^ RAPID_SECRET_ADD)
 }
 
 /// A random number generator that uses the rapidhash mixing algorithm.
@@ -121,7 +71,7 @@ pub const fn rapidrng_single(state: &mut u64) -> u64 {
 /// number generator.
 ///
 /// With the `rand` feature, this RNG implements [`rand_core::Rng`] and [`rand_core::SeedableRng`]
-/// on top of [`rapidrng`] and is fully compatible with [`rand`] v0.10.
+/// on top of [`rapidrng`] and is fully compatible with `rand` v0.10.
 ///
 /// # Examples
 /// Seed it from `rand`'s thread-local RNG (itself seeded from the OS) with `from_rng`:
@@ -158,12 +108,12 @@ impl TryRng for RapidRng {
 
     #[inline]
     fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(rapidrng_parallel(&mut self.state) as u32)
+        Ok(rapidrng(&mut self.state) as u32)
     }
 
     #[inline]
     fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(rapidrng_parallel(&mut self.state))
+        Ok(rapidrng(&mut self.state))
     }
 
     #[inline]

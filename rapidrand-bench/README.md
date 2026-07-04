@@ -57,7 +57,10 @@ driven through shared generic helpers; `fastrand`, `turborand`, and `nanorand` u
 APIs.
 
 - **rapidrand** — `RapidRng` via `rand_core::Rng`, plus a `rapidrand_raw` baseline calling
-  `rapidrng` directly (no trait dispatch), in the `u64` group.
+  `rapidrng` directly (no trait dispatch), in the `u64` group. The `u64` group also benchmarks the
+  wyrand-family constructions (`wyrand`, `w1rand`, `wyranda_chain`, `wyranda_parallel`) reimplemented
+  locally, to confirm they all cost the same — only their output quality differs (see the coverage
+  analysis in `rapidrand/tests/exhaustive.rs`).
 - **fastrand**, **turborand**, **nanorand** (`WyRand`) — wyrand-style competitors.
 - **rand** — `SmallRng` and `StdRng`.
 - **rand_pcg** — `Pcg32` and `Pcg64`.
