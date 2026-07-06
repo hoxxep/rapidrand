@@ -20,7 +20,7 @@ use std::hint::black_box;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use rand_core::SeedableRng;
 
-use rapidrand::{RapidRng, rapidrng};
+use rapidrand::{RapidRand, RapidRand128, rapidrand, rapidrand128};
 
 /// Deterministic seed so every run measures the same work.
 const SEED: u64 = 0x1234_5678_9abc_def0;
@@ -34,7 +34,7 @@ const FILL_BYTES: usize = 1024;
 const ITERS: usize = 1024;
 
 // wyrand-family constructions, reimplemented locally so their instruction counts can be tracked
-// side by side. `rapidrand` ships only `wyranda` (as [`rapidrng`], identical to `wyranda_parallel`);
+// side by side. `rapidrand` ships only `wyranda` (as [`rapidrand`], identical to `wyranda_parallel`);
 // the others exist here purely for comparison. Only the output filter differs between them.
 const ADD: u64 = 0x2d358dccaa6c78a5;
 const XOR: u64 = 0x8bb84b93962eacc9;
@@ -67,12 +67,23 @@ fn wyranda_chain(state: &mut u64) -> u64 {
     mix(old, *state ^ XOR)
 }
 
-/// reinerp's parallel variant: `mix(new, old ^ XOR)`. Shipped as `rapidrng`.
+/// reinerp's parallel variant: `mix(new, old ^ XOR)`. Shipped as `rapidrand`.
 #[inline(always)]
 fn wyranda_parallel(state: &mut u64) -> u64 {
     let old = *state;
     *state = state.wrapping_add(ADD);
     mix(*state, old ^ XOR)
+}
+
+/// Experimental 128-bit variant: shipped `rapidrand128` plus the high counter half,
+/// `mix(lo, hi ^ lo) + hi`. The extra `add` flattens the folded multiply's structural output spikes
+/// (notably the `~2x` bias at `0`); measured here to confirm it costs ~one instruction. Not shipped.
+#[inline(always)]
+fn rapidrand128_addhi(state: &mut u128) -> u64 {
+    let lo = *state as u64;
+    let hi = (*state >> 64) as u64;
+    *state = state.wrapping_add(((ADD as u128) << 64) | XOR as u128);
+    mix(lo, hi ^ lo).wrapping_add(hi)
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +92,11 @@ fn wyranda_parallel(state: &mut u64) -> u64 {
 // the `#[bench::id]` names, which the macro turns into wrapper functions in the same scope.
 // ---------------------------------------------------------------------------
 
-fn mk_rapidrand() -> RapidRng {
-    RapidRng::seed_from_u64(SEED)
+fn mk_rapidrand() -> RapidRand {
+    RapidRand::seed_from_u64(SEED)
+}
+fn mk_rapidrand128() -> RapidRand128 {
+    RapidRand128::seed_from_u64(SEED)
 }
 fn mk_rand_small() -> rand::rngs::SmallRng {
     rand::rngs::SmallRng::seed_from_u64(SEED)
@@ -128,6 +142,7 @@ fn mk_nanorand() -> nanorand::WyRand {
 // the concrete type its argument expression constructs.
 #[library_benchmark]
 #[bench::rapidrand(mk_rapidrand())]
+#[bench::rapidrand128(mk_rapidrand128())]
 #[bench::rand_small(mk_rand_small())]
 #[bench::rand_std(mk_rand_std())]
 #[bench::pcg32(mk_pcg32())]
@@ -144,14 +159,37 @@ fn u64_rand_core<R: rand_core::Rng>(mut rng: R) -> u64 {
     acc
 }
 
-// Raw `rapidrng` function (the shipped wyranda construction), as a dependency-free baseline with no
+// Raw `rapidrand` function (the shipped wyranda construction), as a dependency-free baseline with no
 // trait dispatch.
 #[library_benchmark]
 fn u64_rapidrand_raw() -> u64 {
     let mut seed = black_box(SEED);
     let mut acc = 0u64;
     for _ in 0..ITERS {
-        acc ^= black_box(rapidrng(&mut seed));
+        acc ^= black_box(rapidrand(&mut seed));
+    }
+    acc
+}
+
+// Raw 128-bit `rapidrand128` function (the wider longer-period variant), as a dependency-free
+// baseline with no trait dispatch.
+#[library_benchmark]
+fn u64_rapidrand128_raw() -> u64 {
+    let mut seed = black_box(SEED as u128);
+    let mut acc = 0u64;
+    for _ in 0..ITERS {
+        acc ^= black_box(rapidrand128(&mut seed));
+    }
+    acc
+}
+
+// Experimental `+ hi` variant of `rapidrand128`, to confirm the bias mitigation is ~one instruction.
+#[library_benchmark]
+fn u64_rapidrand128_addhi() -> u64 {
+    let mut seed = black_box(SEED as u128);
+    let mut acc = 0u64;
+    for _ in 0..ITERS {
+        acc ^= black_box(rapidrand128_addhi(&mut seed));
     }
     acc
 }
@@ -235,6 +273,7 @@ fn u64_nanorand(mut rng: nanorand::WyRand) -> u64 {
 
 #[library_benchmark]
 #[bench::rapidrand(mk_rapidrand())]
+#[bench::rapidrand128(mk_rapidrand128())]
 #[bench::rand_small(mk_rand_small())]
 #[bench::rand_std(mk_rand_std())]
 #[bench::pcg32(mk_pcg32())]
@@ -289,6 +328,7 @@ fn u32_nanorand(mut rng: nanorand::WyRand) -> u32 {
 
 #[library_benchmark]
 #[bench::rapidrand(mk_rapidrand())]
+#[bench::rapidrand128(mk_rapidrand128())]
 #[bench::rand_small(mk_rand_small())]
 #[bench::rand_std(mk_rand_std())]
 #[bench::pcg32(mk_pcg32())]
@@ -333,8 +373,9 @@ fn fill_nanorand(mut rng: nanorand::WyRand) -> [u8; FILL_BYTES] {
 
 library_benchmark_group!(
     name = group_u64;
-    benchmarks = u64_rand_core, u64_rapidrand_raw, u64_wyrand, u64_w1rand, u64_wyranda_chain,
-        u64_wyranda_parallel, u64_fastrand, u64_turborand, u64_nanorand
+    benchmarks = u64_rand_core, u64_rapidrand_raw, u64_rapidrand128_raw, u64_rapidrand128_addhi,
+        u64_wyrand, u64_w1rand, u64_wyranda_chain, u64_wyranda_parallel, u64_fastrand, u64_turborand,
+        u64_nanorand
 );
 
 library_benchmark_group!(

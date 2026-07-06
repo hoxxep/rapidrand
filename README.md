@@ -1,11 +1,13 @@
 # rapidrand
 
-An extremely fast pseudo-random number generator in rust. Using the [rapidhash](https://github.com/hoxxep/rapidhash) mixing algorithm, designed for the [`rand`](https://crates.io/crates/rand) crate, and based on [`wyranda`](https://github.com/wangyi-fudan/wyhash/issues/156), an improved variant of [`wyrand`](https://github.com/wangyi-fudan/wyhash).
+An extremely fast pseudo-random number generator in rust. Using the [rapidhash](https://github.com/hoxxep/rapidhash) mixing algorithm, designed for the [`rand`](https://crates.io/crates/rand) crate, and based on improved variants of [`wyrand`](https://github.com/wangyi-fudan/wyhash/issues/156).
 
 * **Extremely fast:** matching the performance of [`fastrand`](https://crates.io/crates/fastrand), [`nanorand`](https://crates.io/crates/nanorand), and [`turborand`](https://crates.io/crates/turborand), which all use the wyrand construction behind their own RNG frameworks.
 * **High quality:** reaches ~63% of its output space where plain wyrand reaches only ~39% ([see below](#quality-wyranda-vs-wyrand)). Passes [PractRand](https://pracrand.sourceforge.net/) up to 32TB, [TestU01](https://github.com/umontreal-simul/TestU01-2009)'s BigCrush, and [coll-birth](https://github.com/vigna/coll-birth-rs) for at least 4T elements.
 * **Designed for [`rand`](https://crates.io/crates/rand):** use the `rand` crate traits 10x faster than the default PRNG and 2x faster than `SmallRng`. Perfect for testing, benchmarks, and synthetic datasets.
 * **Tiny:** 61 source lines of code.
+* **64-bit and 128-bit:** 64-bit and 128-bit versions available.
+* **Rust crate and C/C++ header:** Available as either a rust crate or standalone C/C++ header, `rapidrand.h`, with full support for `<random>`..
 * **Non-cryptographic:** This is **not** a cryptographic random number generator.
 
 ## Performance
@@ -14,7 +16,7 @@ Single-threaded criterion benchmarks from `rapidrand-bench` on an M1 Max. Compar
 
 | RNG                                                                        |    `u64` |   `u32` |   fill 1 KiB |
 |:---------------------------------------------------------------------------|---------:|--------:|-------------:|
-| **[rapidrand](https://crates.io/crates/rapidrand) `RapidRng`**             |  0.51 ns | 0.51 ns |   21.67 GB/s |
+| **[rapidrand](https://crates.io/crates/rapidrand) `RapidRand`**             |  0.51 ns | 0.51 ns |   21.67 GB/s |
 | [fastrand](https://crates.io/crates/fastrand) `Rng`*                       |  0.51 ns | 0.52 ns |   21.49 GB/s |
 | [turborand](https://crates.io/crates/turborand) `Rng`*                     |  1.25 ns | 0.51 ns |   21.56 GB/s |
 | [nanorand](https://crates.io/crates/nanorand) `WyRand`*                    |  0.51 ns | 0.51 ns |    3.57 GB/s |
@@ -31,7 +33,7 @@ Single-threaded criterion benchmarks from `rapidrand-bench` on an M1 Max. Compar
 
 ## Usage
 
-`RapidRng` is built for the [`rand`](https://crates.io/crates/rand) crate. Add both crates and use the full `rand` API:
+`RapidRand` is built for the [`rand`](https://crates.io/crates/rand) crate. Add both crates and use the full `rand` API:
 
 ```toml
 [dependencies]
@@ -43,9 +45,9 @@ Seed it from `rand`'s thread-local RNG (itself seeded from the OS) with `from_rn
 
 ```rust
 use rand::{RngExt};   // RngExt brings `.random()`, `.random_range()`, ...
-use rapidrand::RapidRng;
+use rapidrand::RapidRand;
 
-let mut rng: RapidRng = rand::make_rng();
+let mut rng: RapidRand = rand::make_rng();
 
 let coin: bool = rng.random();
 let roll = rng.random_range(1..=6);
@@ -56,25 +58,25 @@ For a reproducible stream, seed it from a fixed value instead:
 
 ```rust
 use rand::{RngExt, SeedableRng};
-use rapidrand::RapidRng;
+use rapidrand::RapidRand;
 
-let mut rng = RapidRng::seed_from_u64(42);
+let mut rng = RapidRand::seed_from_u64(42);
 let x: u32 = rng.random();
 ```
 
 Or use the standalone function directly, threading the state yourself:
 
 ```rust
-use rapidrand::rapidrng;
+use rapidrand::rapidrand;
 
 let mut state: u64 = 42;
-let x = rapidrng(&mut state);
+let x = rapidrand(&mut state);
 ```
 
 ## Features
 
 - default: `rand`
-- `rand`: implements `rand_core`'s `Rng` / `SeedableRng` and enables `RapidRng` (rand 0.10).
+- `rand`: implements `rand_core`'s `Rng` / `SeedableRng` and enables `RapidRand` (rand 0.10).
 
 ## How it works
 
@@ -115,6 +117,13 @@ Exhaustively measured over a complete period for a 16-bit model of each construc
 | **`wyranda`** | **rapidrand**                 |           **~63.2%** |
 
 The ~39.3% and ~63.2% figures are width-independent limits (`1 - e^(-1/2)` and `1 - 1/e`); the 16-bit measurement matches them within noise and is pinned to the shipped `u64` code by the same test.
+
+## Acknowledgements
+
+This crate is based on the excellent work of, and gives many thanks to:
+* [Reiner Pope](https://github.com/reinerp) for proposing the improvements to wyhash and a 128-bit variant ([wyhash/issue #156](https://github.com/wangyi-fudan/wyhash/issues/156)).
+* [Sebastiano Vigna](https://github.com/vigna) for his analysis on wyrand's weaknesses ([wyhash/issue #130](https://github.com/wangyi-fudan/wyhash/issues/130#issuecomment-4835746792)).
+* [Wany Yi](https://github.com/wangyi-fudan) et al. for the [original wyrand construction](https://github.com/wangyi-fudan/wyhash).
 
 ## License
 

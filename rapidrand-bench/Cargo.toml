@@ -20,7 +20,7 @@ turborand = "0.10"
 nanorand = "0.8"
 
 # rust-random ecosystem — all align on rand_core 0.10, so they share the
-# `rand_core::Rng` trait with rapidrand's `RapidRng`.
+# `rand_core::Rng` trait with rapidrand's `RapidRand`.
 rand = { version = "0.10", features = ["std_rng"] }
 rand_core = "0.10"
 rand_pcg = "0.10"

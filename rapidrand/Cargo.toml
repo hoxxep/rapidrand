@@ -24,7 +24,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["rand"]
-rand = ["dep:rand_core"]  # implement rand_core's Rng/SeedableRng traits for RapidRng
+rand = ["dep:rand_core"]  # implement rand_core's Rng/SeedableRng traits for RapidRand
 
 [dependencies]
 rand_core = { version = "0.10", default-features = false, optional = true }

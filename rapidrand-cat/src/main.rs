@@ -27,7 +27,7 @@ use std::process::ExitCode;
 use nanorand::Rng as _;
 use rand_core::{Rng as _, SeedableRng};
 
-use rapidrand::{RapidRng, rapidrng};
+use rapidrand::{RapidRand, rapidrand};
 
 /// A word source: repeatedly called to produce the next `u64`.
 type Gen = Box<dyn FnMut() -> u64>;
@@ -64,12 +64,12 @@ fn canonical(name: &str) -> Option<&'static str> {
 fn make_gen(rng: &str, seed: u64) -> Gen {
     match rng {
         "rapidrand" => {
-            let mut r = RapidRng::seed_from_u64(seed);
+            let mut r = RapidRand::seed_from_u64(seed);
             Box::new(move || r.next_u64())
         }
         "rapidrand_raw" => {
             let mut s = seed;
-            Box::new(move || rapidrng(&mut s))
+            Box::new(move || rapidrand(&mut s))
         }
         "fastrand" => {
             let mut r = fastrand::Rng::with_seed(seed);

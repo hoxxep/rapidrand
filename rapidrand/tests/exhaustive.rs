@@ -1,4 +1,4 @@
-//! Exhaustive full-period output-space tests for the wyrand-family constructions behind `rapidrng`.
+//! Exhaustive full-period output-space tests for the wyrand-family constructions behind `rapidrand`.
 //!
 //! # Why this exists
 //!
@@ -44,17 +44,43 @@
 //! the involution `x -> x ^ XOR` swaps them and leaves the product fixed, forcing the 2-to-1
 //! collapse. chain and parallel each draw one operand from `state[0]` and the other from `state[1]`,
 //! so that swap no longer maps one operand to the other — the symmetry is broken and both recover the
-//! random-function `~63.2%`. `rapidrand` ships the parallel variant as `rapidrng` (and `RapidRng`).
+//! random-function `~63.2%`. `rapidrand` ships the parallel variant as `rapidrand` (and `RapidRand`).
 //!
 //! ## Why a u16 model proves the u64 claim
 //!
 //! The `1 - 1/e` and `1 - e^(-1/2)` figures are width-independent limits (already exact to ~5 digits
 //! at `N = 2^16`). We reimplement the exact same arithmetic over `u16`, enumerate the entire
 //! `2^16`-state period, and measure the real image multiset. [`u64_model_matches_crate`] pins the
-//! parallel model to the shipped `rapidrng` at `u64`, so the u16 measurement transfers to the shipped
+//! parallel model to the shipped `rapidrand` at `u64`, so the u16 measurement transfers to the shipped
 //! code.
+//!
+//! # The 128-bit variant (`wyrand128` / [`rapidrand128`])
+//!
+//! [`rapidrand128`] is a different animal. Its state is a `2n`-bit Weyl counter held as two `n`-bit
+//! halves `(hi, lo)`, and its output folds both halves as `fold_mul(lo, hi ^ lo)` — a `2n -> n` map,
+//! not the `n -> n` filter of the single-state variants. Over its full `2^(2n)` period the pair
+//! `(lo, hi ^ lo)` ranges over *every* `(a, b)` pair exactly once (the counter is full-period and
+//! `(lo, hi) -> (lo, hi ^ lo)` is a bijection), so the output multiset is exactly
+//! `{ fold_mul(a, b) : a, b in [N] }` — `N^2` draws into an `N`-value space, ~`N` hits per value.
+//!
+//! That changes which claims are exact and width-independent, so we test a different set:
+//!
+//! * **Full `2^(2n)` period** — the paired increment `(ADD:XOR)` is odd (its low bit is `XOR`'s), so
+//!   the `2n`-bit counter is full-period. [`wyrand128_has_full_period`].
+//! * **Complete coverage** — every output value is reachable (`~1 - e^-N`, effectively `100%`), so the
+//!   construction does *not* suffer a wyrand-style coverage collapse even though it has a 2-to-1
+//!   internal symmetry (see [`wyrand128_output_depends_only_on_the_folded_pair`]).
+//! * **Structural `2x` bias at zero** — every pair with `a == 0` or `b == 0` folds to `0`, so `0`
+//!   collects `>= 2N - 1` preimages (~`2x` the mean `N`) at *every* width. [`wyrand128_zero_output_is_doubly_represented`].
+//!
+//! What the narrow model does **not** transfer is the fine-grained *shape* of the histogram: unlike
+//! the `1 - 1/e` coverage constant, the uniformity of a folded multiply over the whole `N x N` product
+//! domain is width-dependent (small-integer products dominate the tail at `n = 8` and wash out by
+//! `n = 64`). Establishing that is the job of the empirical suites (PractRand / TestU01), against which
+//! the 128-bit variant is not yet validated. [`u128_model_matches_crate`] pins the model to the
+//! shipped [`rapidrand128`] at `n = 64` exactly as [`u64_model_matches_crate`] does for the 64-bit line.
 
-use rapidrand::rapidrng;
+use rapidrand::{rapidrand, rapidrand128};
 
 /// One draw of a `u16` construction: advance the state in place and return the output.
 type Step = fn(&mut u16) -> u16;
@@ -67,15 +93,20 @@ trait Word: Copy + Eq {
     const SPACE: usize = 1 << Self::BITS;
     /// Starting state for enumeration.
     const ZERO: Self;
+    /// One (for propagating the carry in the 128-bit model).
+    const ONE: Self;
     /// Odd Weyl increment (guarantees a full-period cycle), truncated from `RAPID_SECRET_ADD`.
     const ADD: Self;
-    /// Non-zero xor secret, truncated from `RAPID_SECRET_XOR`.
+    /// Non-zero xor secret, truncated from `RAPID_SECRET_XOR`. Its low bit is set, so the paired
+    /// `2·BITS`-wide increment `(ADD:XOR)` used by the 128-bit model is odd (full `2·BITS` period).
     const XOR: Self;
 
     /// Folded widening multiply `fold(a * b)`, matching `rapid_mix` at this width.
     fn fold_mul(a: Self, b: Self) -> Self;
     fn wadd(self, other: Self) -> Self;
     fn xor(self, other: Self) -> Self;
+    /// Wrapping add returning `(sum, carry_out)`, for incrementing the split `(hi:lo)` counter.
+    fn carrying_add(self, other: Self) -> (Self, bool);
     fn index(self) -> usize;
 }
 
@@ -84,6 +115,7 @@ macro_rules! impl_word {
         impl Word for $ty {
             const BITS: u32 = <$ty>::BITS;
             const ZERO: Self = 0;
+            const ONE: Self = 1;
             const ADD: Self = $add;
             const XOR: Self = $xor;
 
@@ -101,6 +133,11 @@ macro_rules! impl_word {
                 self ^ other
             }
             #[inline(always)]
+            fn carrying_add(self, other: Self) -> (Self, bool) {
+                let sum = self.wrapping_add(other);
+                (sum, sum < self) // unsigned wraparound => carry out of this half
+            }
+            #[inline(always)]
             fn index(self) -> usize {
                 self as usize
             }
@@ -111,11 +148,17 @@ macro_rules! impl_word {
 // Truncated from the real secrets (ADD forced odd, top bit clear):
 //   RAPID_SECRET_ADD = 0x2d358dccaa6c78a5   RAPID_SECRET_XOR = 0x8bb84b93962eacc9
 // u16 ADD 0x78a5 has 8 zero bits -> exactly 2^8 = 256 structural `w1rand` repeats.
+//
+// The `u8` width is only used by the 128-bit `wyrand128` model: its state is two u8 halves, so its
+// full period is 2^16 states — the same enumeration budget as the u16 single-state model above. The
+// low bit of XOR (0xc9) is set, so the paired 16-bit increment (0xa5c9) is odd and the counter runs
+// its full 2^16 period.
+impl_word!(u8, u16, 0xa5, 0xc9);
 impl_word!(u16, u32, 0x78a5, 0xacc9);
 impl_word!(u64, u128, 0x2d358dccaa6c78a5, 0x8bb84b93962eacc9);
 
 // The four wyrand-family constructions, generic over word width. `u64_model_matches_crate` proves
-// the parallel model matches the shipped `rapidrng` line-for-line at `u64`.
+// the parallel model matches the shipped `rapidrand` line-for-line at `u64`.
 
 /// `wyrand`: symmetric single-state filter `fold(state · (state ^ XOR))`.
 #[inline(always)]
@@ -139,12 +182,42 @@ fn v_wyranda_chain<W: Word>(state: &mut W) -> W {
     W::fold_mul(old, state.xor(W::XOR))
 }
 
-/// `wyranda_parallel` (reinerp): asymmetric, `fold(new · (old ^ XOR))`. Shipped as `rapidrng`.
+/// `wyranda_parallel` (reinerp): asymmetric, `fold(new · (old ^ XOR))`. Shipped as `rapidrand`.
 #[inline(always)]
 fn v_wyranda_parallel<W: Word>(state: &mut W) -> W {
     let old = *state;
     *state = state.wadd(W::ADD);
     W::fold_mul(*state, old.xor(W::XOR))
+}
+
+/// `wyrand128`: the base folded output of the wider, longer-period construction. The state is a
+/// `2·BITS`-wide Weyl counter held as two `W`-halves `(hi, lo)`; the output folds the two halves as
+/// `fold(lo · (hi ^ lo))` on the *pre-increment* state. The counter then advances by the odd
+/// `2·BITS`-wide constant `(ADD:XOR)` (add `ADD` to `hi`, `XOR` to `lo`, propagating the carry), so it
+/// has a full `2^(2·BITS)` period. Unlike the single-state variants this maps a `2·BITS`-bit state to a
+/// `BITS`-bit output. The shipped [`rapidrand128`] adds the pre-increment high word back on top of this
+/// fold (see [`v_wyrand128_addhi`]); this base output is kept as the reference for that comparison.
+#[inline(always)]
+fn v_wyrand128<W: Word>(state: &mut (W, W)) -> W {
+    let (hi, lo) = *state;
+    let out = W::fold_mul(lo, lo.xor(hi));
+    let (new_lo, carry) = lo.carrying_add(W::XOR);
+    let new_hi = hi.wadd(W::ADD).wadd(if carry { W::ONE } else { W::ZERO });
+    *state = (new_hi, new_lo);
+    out
+}
+
+/// `wyrand128_addhi`: the shipped [`rapidrand128`] construction, which hardens the base
+/// [`v_wyrand128`] fold by adding the high counter half back into the output, `fold(lo · (hi ^ lo)) + hi`.
+/// The folded multiply alone over-represents a few *structured* output values (`0` and the all-ones word
+/// most strongly — see [`wyrand128_zero_output_is_doubly_represented`]); adding the full-entropy `hi`
+/// word flattens those spikes toward the ideal `N` preimages each. [`wyrand128_addhi_flattens_the_output`]
+/// measures the improvement over the full `2^16` period, and [`u128_model_matches_crate`] pins the
+/// arithmetic to the shipped [`rapidrand128`] at `W = u64`.
+#[inline(always)]
+fn v_wyrand128_addhi<W: Word>(state: &mut (W, W)) -> W {
+    let hi = state.0;
+    v_wyrand128(state).wadd(hi)
 }
 
 /// Measurements taken by walking one full `2^BITS`-state period.
@@ -178,6 +251,31 @@ impl Stats {
         Stats { preimages, repeats }
     }
 
+    /// Walk the full `2^(2·BITS)`-state period of the 128-bit [`v_wyrand128`] construction, recording
+    /// the multiset of `BITS`-wide outputs. The state space (`2^(2·BITS)`) is the square of the output
+    /// space (`2^BITS`), so unlike [`Stats::collect`] this is a `2·BITS -> BITS` map: every output is
+    /// hit ~`2^BITS` times, not ~once.
+    fn collect_128<W: Word>(step: impl Fn(&mut (W, W)) -> W) -> Stats {
+        let mut preimages = vec![0u32; W::SPACE];
+        let mut state = (W::ZERO, W::ZERO);
+        let mut repeats = 0;
+        let period = W::SPACE * W::SPACE; // 2^(2·BITS)
+        let (mut first, mut prev) = (None, None);
+        for _ in 0..period {
+            let out = step(&mut state);
+            preimages[out.index()] += 1;
+            if prev == Some(out) {
+                repeats += 1;
+            }
+            first = first.or(Some(out));
+            prev = Some(out);
+        }
+        if prev == first {
+            repeats += 1;
+        }
+        Stats { preimages, repeats }
+    }
+
     /// Fraction of the output space with at least one preimage (the "coverage" claim).
     fn coverage(&self) -> f64 {
         let hit = self.preimages.iter().filter(|&&c| c > 0).count();
@@ -194,6 +292,29 @@ impl Stats {
     /// 2-to-1 map (the symmetric variants); positive once that symmetry is broken.
     fn odd_preimage_values(&self) -> usize {
         self.preimages.iter().filter(|&&c| c % 2 == 1).count()
+    }
+
+    /// The largest preimage count — the height of the most over-represented output value, in units of
+    /// the mean. `1.0` is perfectly flat; the folded multiply spikes well above it.
+    fn peak_over_mean(&self) -> f64 {
+        let max = *self.preimages.iter().max().unwrap_or(&0);
+        f64::from(max) / self.mean()
+    }
+
+    /// Mean preimage count over the whole output space.
+    fn mean(&self) -> f64 {
+        let total: u64 = self.preimages.iter().map(|&c| u64::from(c)).sum();
+        total as f64 / self.preimages.len() as f64
+    }
+
+    /// Variance of the preimage counts normalised by the mean. A random function gives `~1` (Poisson);
+    /// larger means a lumpier, less uniform output histogram.
+    fn variance_over_mean(&self) -> f64 {
+        let mean = self.mean();
+        let var =
+            self.preimages.iter().map(|&c| (f64::from(c) - mean).powi(2)).sum::<f64>()
+                / self.preimages.len() as f64;
+        var / mean
     }
 }
 
@@ -253,7 +374,7 @@ fn wyranda_variants_recover_random_statistics() {
     }
 }
 
-/// Pin the parallel model to the real shipped `rapidrng` at `u64`: the arithmetic measured at `u16`
+/// Pin the parallel model to the real shipped `rapidrand` at `u64`: the arithmetic measured at `u16`
 /// is bit-identical to what ships, so the small-width claims transfer.
 #[test]
 fn u64_model_matches_crate() {
@@ -261,9 +382,189 @@ fn u64_model_matches_crate() {
     for seed in seeds {
         let (mut a, mut b) = (seed, seed);
         for _ in 0..64 {
-            assert_eq!(v_wyranda_parallel(&mut a), rapidrng(&mut b), "mismatch (seed {seed:#x})");
+            assert_eq!(v_wyranda_parallel(&mut a), rapidrand(&mut b), "mismatch (seed {seed:#x})");
         }
     }
+}
+
+/// The 128-bit `wyrand128` counter runs its full `2^(2·BITS)` period: over the u8-halves model the
+/// `2^16` states are all distinct and the counter returns to its start only after the last one. This
+/// is the odd-increment guarantee — the paired increment `(ADD:XOR)` is odd because `XOR`'s low bit is
+/// set — measured exactly, so it transfers to the shipped `2^128` period.
+#[test]
+fn wyrand128_has_full_period() {
+    let period = 1usize << (2 * u8::BITS); // 2^16 states
+    let mut state = (u8::ZERO, u8::ZERO);
+    let mut seen = std::collections::HashSet::with_capacity(period);
+    for _ in 0..period {
+        assert!(seen.insert(state), "state {state:?} revisited before the full period elapsed");
+        let _ = v_wyrand128(&mut state);
+    }
+    assert_eq!(seen.len(), period, "counter did not visit all 2^16 states");
+    assert_eq!(state, (u8::ZERO, u8::ZERO), "counter did not return to its start after one period");
+}
+
+/// The `2·BITS -> BITS` folded multiply reaches its *entire* output space: every one of the `2^BITS`
+/// values appears over the full period, and each appears `N` times on average. Unlike the symmetric
+/// single-state variants (which collapse to `~39%`), `wyrand128` has no coverage defect — even though
+/// its output is only a 2-to-1 function of the state (see
+/// [`wyrand128_output_depends_only_on_the_folded_pair`]), the codomain is far smaller than the state
+/// space, so nothing is left unreachable.
+#[test]
+fn wyrand128_covers_output_space() {
+    let stats = Stats::collect_128::<u8>(v_wyrand128);
+    let total: u64 = stats.preimages.iter().map(|&c| u64::from(c)).sum();
+    let n = stats.preimages.len() as u64;
+
+    assert_eq!(total, n * n, "expected N^2 = {} draws over the full period", n * n);
+    assert_eq!(total / n, n, "mean preimage count should be exactly N");
+    assert_close("wyrand128 coverage", stats.coverage(), 1.0, 0.0);
+    assert!(stats.preimages.iter().all(|&c| c > 0), "some output value was never produced");
+}
+
+/// The zero output is structurally over-represented: every pair with `a == 0` or `b == 0` folds to
+/// `0`, giving `2N - 1` guaranteed preimages — `~2x` the mean `N` at *every* width. At u8 that bound is
+/// tight (`511`): a non-zero pair could only fold to `0` if its product had equal high and low bytes,
+/// i.e. were a multiple of `257`, which is prime and `> u8::MAX`, so no non-zero pair qualifies.
+#[test]
+fn wyrand128_zero_output_is_doubly_represented() {
+    let stats = Stats::collect_128::<u8>(v_wyrand128);
+    let n = stats.preimages.len() as u32;
+    let zeros = stats.preimages[0];
+
+    assert!(zeros >= 2 * n - 1, "zero should collect at least the 2N-1 zero-product pairs");
+    assert_eq!(zeros, 2 * n - 1, "at u8 exactly the zero-product pairs fold to 0 (257 is prime)");
+    let ratio = f64::from(zeros) / f64::from(n);
+    assert!((1.9..=2.1).contains(&ratio), "zero should be ~2x over-represented, got {ratio:.3}x");
+}
+
+/// `wyrand128`'s output is a commutative fold of `lo` and `hi ^ lo`, so it depends only on the
+/// unordered pair `{lo, hi ^ lo}`. Swapping which half is which — state `(hi, lo)` vs `(hi, hi ^ lo)` —
+/// leaves the output unchanged, making the state -> output map exactly 2-to-1 off the `hi == 0`
+/// diagonal. This is the 128-bit analogue of the `fold_mul` commutativity symmetry that halves the
+/// 64-bit variants; here it costs no coverage (see [`wyrand128_covers_output_space`]). Verified over
+/// every one of the `2^16` states.
+#[test]
+fn wyrand128_output_depends_only_on_the_folded_pair() {
+    let out = |hi: u8, lo: u8| -> u8 {
+        let mut s = (hi, lo);
+        v_wyrand128(&mut s)
+    };
+    let mut off_diagonal = 0u32;
+    for hi in 0..=u8::MAX {
+        for lo in 0..=u8::MAX {
+            assert_eq!(out(hi, lo), out(hi, hi ^ lo), "symmetry broken at (hi {hi}, lo {lo})");
+            if hi != 0 {
+                off_diagonal += 1;
+            }
+        }
+    }
+    // Off the hi==0 diagonal the two colliding states are distinct, so the map really is 2-to-1 there.
+    assert_eq!(off_diagonal, (1 << 16) - (1 << 8), "expected 2^16 - 2^8 off-diagonal states");
+}
+
+/// Pin the `wyrand128_addhi` model to the real shipped [`rapidrand128`] at the full `u64` half-width:
+/// the arithmetic enumerated at u8 is bit-identical to what ships (the crate folds the two halves and
+/// adds the pre-increment high word back in), so the small-width claims transfer. The model's
+/// `(hi, lo)` halves must track the crate's `u128` state step for step.
+#[test]
+fn u128_model_matches_crate() {
+    let seeds: [u128; 8] = [
+        0,
+        1,
+        2,
+        42,
+        u128::MAX,
+        u128::MAX - 1,
+        0x2d358dccaa6c78a5_8bb84b93962eacc9,
+        (0x8bb84b93962eacc9u128 << 64) | 0x2d358dccaa6c78a5,
+    ];
+    for seed in seeds {
+        let mut model = ((seed >> 64) as u64, seed as u64); // (hi, lo)
+        let mut crate_state = seed;
+        for _ in 0..64 {
+            assert_eq!(
+                v_wyrand128_addhi(&mut model),
+                rapidrand128(&mut crate_state),
+                "output mismatch (seed {seed:#x})",
+            );
+            assert_eq!(
+                model,
+                ((crate_state >> 64) as u64, crate_state as u64),
+                "state mismatch (seed {seed:#x})",
+            );
+        }
+    }
+}
+
+/// The shipped `wyrand128_addhi` construction flattens the folded multiply's structural output
+/// spikes. Over the full `2^16` period it keeps complete coverage but pulls the tallest spike from
+/// `~5.8x` the mean down below `~1.5x`, shrinks the normalised variance several-fold, and drags the
+/// over-represented `0` value back toward the mean — all for one extra `add`. (The remaining spread is
+/// still a u8 artifact; the point here is the *relative* improvement over [`v_wyrand128`], which is
+/// robust across widths.)
+#[test]
+fn wyrand128_addhi_flattens_the_output() {
+    let base = Stats::collect_128::<u8>(v_wyrand128);
+    let addhi = Stats::collect_128::<u8>(v_wyrand128_addhi);
+    let n = addhi.preimages.len() as u32;
+
+    // Still reaches every output value.
+    assert_close("addhi coverage", addhi.coverage(), 1.0, 0.0);
+
+    // The tallest spike collapses: base towers >4x over the mean, addhi sits below 2x.
+    assert!(base.peak_over_mean() > 4.0, "base peak {:.2}x should tower over the mean", base.peak_over_mean());
+    assert!(addhi.peak_over_mean() < 2.0, "addhi peak {:.2}x should be near-flat", addhi.peak_over_mean());
+
+    // The whole histogram is several-fold flatter.
+    assert!(
+        base.variance_over_mean() > 3.0 * addhi.variance_over_mean(),
+        "addhi var/mean {:.2} should be several-fold below base {:.2}",
+        addhi.variance_over_mean(),
+        base.variance_over_mean(),
+    );
+
+    // The structural 0 spike is pulled toward the ideal mean (though not all the way to 1x).
+    let base_zero_excess = (f64::from(base.preimages[0]) / f64::from(n) - 1.0).abs();
+    let addhi_zero_excess = (f64::from(addhi.preimages[0]) / f64::from(n) - 1.0).abs();
+    assert!(
+        addhi_zero_excess < base_zero_excess,
+        "addhi zero excess {addhi_zero_excess:.3} should be below base {base_zero_excess:.3}",
+    );
+}
+
+/// Human-readable summary comparing the base folded 128-bit output with the shipped `+ hi`
+/// hardening over the full `2^16` period. Run with `--nocapture`. The broad spread is a small-width
+/// artifact (tiny-integer products) that washes out toward `u64`, but a few *structured* values stay
+/// spiked at every width — `0` (the `~2x` zero-product bias) and the all-ones word most of all. The
+/// `+ hi` column shows those spikes collapsing toward the ideal flat `N` preimages per value.
+#[test]
+fn print_rapidrand128_summary() {
+    let row = |name: &str, s: &Stats| {
+        let max = *s.preimages.iter().max().unwrap();
+        let min = *s.preimages.iter().min().unwrap();
+        println!(
+            "  {name:<16} {:>7.2}% {:>7.0} {:>6}/{:<6} {:>7} {:>9.1} {:>8.2}x",
+            s.coverage() * 100.0,
+            s.mean(),
+            min,
+            max,
+            s.preimages[0],
+            s.variance_over_mean(),
+            s.peak_over_mean(),
+        );
+    };
+
+    let base = Stats::collect_128::<u8>(v_wyrand128);
+    let addhi = Stats::collect_128::<u8>(v_wyrand128_addhi);
+    println!("\n128-bit variants over the full 2^16 period (u8 halves), N=256 output values:");
+    println!(
+        "  {:<16} {:>8} {:>7} {:>13} {:>7} {:>9} {:>9}",
+        "variant", "coverage", "mean", "min/max", "count(0)", "var/mean", "peak/mean",
+    );
+    row("wyrand128", &base);
+    row("+ hi", &addhi);
+    println!("  (ideal random-function map: var/mean ~ 1, peak/mean ~ 1, count(0) ~ mean 256)\n");
 }
 
 /// Human-readable summary of every construction over the full `2^16` period. Run with `--nocapture`.

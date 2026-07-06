@@ -30,7 +30,7 @@ GROUPS = [("u64", 8), ("u32", 4), ("fill", None)]
 
 # Bench function id -> what the row measures. Also fixes the row order for ties.
 CRATES = {
-    "rapidrand": "**[rapidrand](https://crates.io/crates/rapidrand) `RapidRng`**",
+    "rapidrand": "**[rapidrand](https://crates.io/crates/rapidrand) `RapidRand`**",
     "fastrand": "[fastrand](https://crates.io/crates/fastrand) `Rng`",
     "nanorand_wyrand": "[nanorand](https://crates.io/crates/nanorand) `WyRand`",
     "turborand": "[turborand](https://crates.io/crates/turborand) `Rng`",
