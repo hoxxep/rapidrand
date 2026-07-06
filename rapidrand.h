@@ -110,13 +110,19 @@
 /* Rapidhash V1 secret[1]. */
 #define RAPIDRAND_SECRET_XOR UINT64_C(0x8bb84b93962eacc9)
 
+/* A 128-bit product carried as two 64-bit halves, `hi:lo == a * b`. */
+typedef struct rapidrand_u128 {
+    uint64_t lo;
+    uint64_t hi;
+} rapidrand_u128;
+
 /*
- * Portable folded 64x64 -> 128 multiply via 32-bit halves, needing no 128-bit
- * type or intrinsics. Pure arithmetic, so it is usable in constant expressions
- * on every compiler; the fast paths below fall back to it when evaluated at
- * compile time on toolchains whose multiply intrinsic is not constexpr.
+ * Portable 64x64 -> 128 multiply via 32-bit halves, needing no 128-bit type or
+ * intrinsics. Pure arithmetic, so it is usable in constant expressions on every
+ * compiler; the fast paths below fall back to it when evaluated at compile time
+ * on toolchains whose multiply intrinsic is not constexpr.
  */
-RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand_mix_portable(uint64_t a, uint64_t b) RAPIDRAND_NOEXCEPT {
+RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE rapidrand_u128 rapidrand_mul_portable(uint64_t a, uint64_t b) RAPIDRAND_NOEXCEPT {
     uint64_t ha = a >> 32, la = (uint32_t)a;
     uint64_t hb = b >> 32, lb = (uint32_t)b;
     uint64_t rh = ha * hb;
@@ -127,7 +133,45 @@ RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand_mix_portable(uint64_t a,
     uint64_t c = t < rl;
     uint64_t lo = t + (rm1 << 32);
     uint64_t hi = rh + (rm0 >> 32) + (rm1 >> 32) + c + (uint64_t)(lo < t);
-    return lo ^ hi;
+    rapidrand_u128 out = { lo, hi };
+    return out;
+}
+
+/*
+ * Full 64x64 -> 128 multiply, returning both 64-bit halves of the product `a * b`.
+ * Uses a native 128-bit type or a platform multiply-high intrinsic where
+ * available, and falls back to `rapidrand_mul_portable` otherwise (and during
+ * constant evaluation on toolchains whose intrinsic is not constexpr).
+ */
+RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE rapidrand_u128 rapidrand_mul(uint64_t a, uint64_t b) RAPIDRAND_NOEXCEPT {
+#if RAPIDRAND_HAS_INT128
+    __uint128_t r = (__uint128_t)a * (__uint128_t)b;
+    rapidrand_u128 out = { (uint64_t)r, (uint64_t)(r >> 64) };
+    return out;
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+    /* MSVC's 128-bit multiply intrinsics are not usable in constant expressions,
+     * so route compile-time evaluation through the portable multiply. */
+#if defined(__cplusplus) && __cplusplus >= 201402L && _MSC_VER >= 1925
+    if (__builtin_is_constant_evaluated()) {
+        return rapidrand_mul_portable(a, b);
+    }
+#endif
+#if defined(_M_X64)
+    {
+        uint64_t hi;
+        uint64_t lo = _umul128(a, b, &hi);
+        rapidrand_u128 out = { lo, hi };
+        return out;
+    }
+#else
+    {
+        rapidrand_u128 out = { a * b, __umulh(a, b) };
+        return out;
+    }
+#endif
+#else
+    return rapidrand_mul_portable(a, b);
+#endif
 }
 
 /*
@@ -135,29 +179,18 @@ RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand_mix_portable(uint64_t a,
  * and low 64-bit halves together. Matches `rapid_mix` in the Rust crate.
  */
 RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand_mix(uint64_t a, uint64_t b) RAPIDRAND_NOEXCEPT {
-#if RAPIDRAND_HAS_INT128
-    __uint128_t r = (__uint128_t)a * (__uint128_t)b;
-    return (uint64_t)r ^ (uint64_t)(r >> 64);
-#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
-    /* MSVC's 128-bit multiply intrinsics are not usable in constant expressions,
-     * so route compile-time evaluation through the portable multiply. */
-#if defined(__cplusplus) && __cplusplus >= 201402L && _MSC_VER >= 1925
-    if (__builtin_is_constant_evaluated()) {
-        return rapidrand_mix_portable(a, b);
-    }
-#endif
-#if defined(_M_X64)
-    {
-        uint64_t hi;
-        uint64_t lo = _umul128(a, b, &hi);
-        return lo ^ hi;
-    }
-#else
-    return __umulh(a, b) ^ (a * b);
-#endif
-#else
-    return rapidrand_mix_portable(a, b);
-#endif
+    rapidrand_u128 r = rapidrand_mul(a, b);
+    return r.lo ^ r.hi;
+}
+
+/*
+ * Folded multiply via the portable 32-bit decomposition, bypassing any 128-bit
+ * type or intrinsic. Kept as a named entry point so tests can exercise the
+ * fallback path directly.
+ */
+RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand_mix_portable(uint64_t a, uint64_t b) RAPIDRAND_NOEXCEPT {
+    rapidrand_u128 r = rapidrand_mul_portable(a, b);
+    return r.lo ^ r.hi;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -214,10 +247,13 @@ typedef struct rapidrand128 {
 /*
  * Generate a pseudorandom uint64_t and advance the 128-bit counter.
  *
- * The two halves of the counter feed the folded multiply as `mix(lo, hi ^ lo)`
- * and the pre-increment high word is added back on top (`+ hi`) to flatten the
- * fold's structural output spikes, so the output mixes two counter streams; the
- * counter has a full 2^128 period.
+ * The two halves `hi:lo` of the pre-increment counter are run through a
+ * double folded multiply: a first product `hi * lo`, then a second multiply of
+ * that product's halves as `(plo ^ SECRET_XOR) * (phi ^ lo)`, folded with the
+ * pre-increment high word added back into the low half (`fold ^ (lo + hi)`).
+ * The double multiply avalanches the two counter streams into a near
+ * random-function output; the counter has a full 2^128 period. Matches
+ * `rapidrand128` in the Rust crate.
  */
 RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand128_next(rapidrand128 *r) RAPIDRAND_NOEXCEPT {
 #if RAPIDRAND_HAS_INT128
@@ -225,7 +261,6 @@ RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand128_next(rapidrand128 *r)
     uint64_t hi = (uint64_t)(r->state >> 64);
     /* 128-bit odd increment (SECRET_ADD:SECRET_XOR) => full 2^128 period. */
     r->state += ((__uint128_t)RAPIDRAND_SECRET_ADD << 64) | RAPIDRAND_SECRET_XOR;
-    return rapidrand_mix(lo, hi ^ lo) + hi;
 #else
     uint64_t lo = r->lo;
     uint64_t hi = r->hi;
@@ -233,25 +268,27 @@ RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE uint64_t rapidrand128_next(rapidrand128 *r)
     uint64_t new_lo = lo + RAPIDRAND_SECRET_XOR;
     r->lo = new_lo;
     r->hi = hi + RAPIDRAND_SECRET_ADD + (uint64_t)(new_lo < lo);
-    return rapidrand_mix(lo, hi ^ lo) + hi;
 #endif
+    /* Double folded multiply of the two counter halves. */
+    rapidrand_u128 p = rapidrand_mul(hi, lo);
+    rapidrand_u128 rr = rapidrand_mul(p.lo ^ RAPIDRAND_SECRET_XOR, p.hi ^ lo);
+    return rr.hi ^ (rr.lo + hi);
 }
 
 /*
- * Seed a 128-bit generator from a single uint64_t, expanding it through the
- * 64-bit generator so both halves of the counter start well-mixed and nearby
- * seeds diverge.
+ * Seed a 128-bit generator from a single uint64_t. The double-multiply avalanche
+ * is strong enough that no seed pre-mixing is needed and there are no weak seeds,
+ * so the state is simply `seed + 1`. The `+ 1` keeps `seed == 0` off the all-zero
+ * state, whose output is 0. Matches `RapidRand128::seed_from_u64` in the Rust crate.
  */
 RAPIDRAND_CONSTEXPR RAPIDRAND_INLINE rapidrand128 rapidrand128_init(uint64_t seed) RAPIDRAND_NOEXCEPT {
-    rapidrand s = rapidrand_init(seed);
-    uint64_t lo = rapidrand_next(&s);
-    uint64_t hi = rapidrand_next(&s);
-
-    #if RAPIDRAND_HAS_INT128
-        rapidrand128 r = { ((__uint128_t)hi << 64) | lo };
-    #else
-        rapidrand128 r = { lo, hi };
-    #endif
+#if RAPIDRAND_HAS_INT128
+    rapidrand128 r = { (__uint128_t)seed + 1 };
+#else
+    /* (seed + 1) widened to 128 bits: only seed == UINT64_MAX carries into hi. */
+    uint64_t lo = seed + 1;
+    rapidrand128 r = { lo, (uint64_t)(lo == 0) };
+#endif
     return r;
 }
 

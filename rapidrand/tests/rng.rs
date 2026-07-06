@@ -37,7 +37,10 @@ fn bit_flip_trial_fast() {
         );
         flips.push(flipped);
 
-        assert!(!seen.contains(&next), "rapidrand produced a duplicate value");
+        assert!(
+            !seen.contains(&next),
+            "rapidrand produced a duplicate value"
+        );
         seen.insert(next);
 
         prev = next;
@@ -74,7 +77,10 @@ fn bit_flip_trial() {
         );
         flips.push(flipped);
 
-        assert!(!seen.contains(&next), "RapidRand produced a duplicate value");
+        assert!(
+            !seen.contains(&next),
+            "RapidRand produced a duplicate value"
+        );
         seen.insert(next);
 
         prev = next;
@@ -134,7 +140,10 @@ fn bit_flip_trial_128_fast() {
         );
         flips.push(flipped);
 
-        assert!(!seen.contains(&next), "rapidrand128 produced a duplicate value");
+        assert!(
+            !seen.contains(&next),
+            "rapidrand128 produced a duplicate value"
+        );
         seen.insert(next);
 
         prev = next;

@@ -92,19 +92,6 @@ fn rapidrand128_addhi(state: &mut u128) -> u64 {
     mix(lo, hi ^ lo).wrapping_add(hi)
 }
 
-/// Experimental 128-bit variant that adds the high counter half back into the shipped
-/// `rapidrand128` output: `mix(lo, hi ^ lo) + hi`. The extra `add` injects a full-entropy word that
-/// flattens the folded-multiply's structural output spikes (notably the `~2x` over-representation of
-/// `0`); benchmarked here to confirm the mitigation costs ~one instruction. Not shipped — see the
-/// `wyrand128_addhi_*` tests in `rapidrand/tests/exhaustive.rs`.
-#[inline(always)]
-fn rapidrand128_addlo(state: &mut u128) -> u64 {
-    let lo = *state as u64;
-    let hi = (*state >> 64) as u64;
-    *state = state.wrapping_add(((ADD as u128) << 64) | XOR as u128);
-    mix(lo, hi ^ lo).wrapping_add(lo)
-}
-
 // ---------------------------------------------------------------------------
 // Per-workload helpers for any generator implementing `rand_core::Rng`.
 //
@@ -188,12 +175,6 @@ fn bench_u64_workload(c: &mut Criterion) {
     g.bench_function("rapidrand128_addhi_raw", |b| {
         let mut seed = SEED as u128;
         b.iter(|| rapidrand128_addhi(&mut seed))
-    });
-
-    // Experimental `+ lo` variant, to confirm the bias mitigation costs ~one instruction.
-    g.bench_function("rapidrand128_addlo_raw", |b| {
-        let mut seed = SEED as u128;
-        b.iter(|| rapidrand128_addlo(&mut seed))
     });
 
     // The wyrand-family constructions reimplemented locally, to confirm they are all the same speed

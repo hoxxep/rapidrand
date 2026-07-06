@@ -3,10 +3,10 @@
 An extremely fast pseudo-random number generator in rust. Using the [rapidhash](https://github.com/hoxxep/rapidhash) mixing algorithm, designed for the [`rand`](https://crates.io/crates/rand) crate, and based on improved variants of [`wyrand`](https://github.com/wangyi-fudan/wyhash/issues/156).
 
 * **Extremely fast:** matching the performance of [`fastrand`](https://crates.io/crates/fastrand), [`nanorand`](https://crates.io/crates/nanorand), and [`turborand`](https://crates.io/crates/turborand), which all use the wyrand construction behind their own RNG frameworks.
-* **High quality:** reaches ~63% of its output space where plain wyrand reaches only ~39% ([see below](#quality-wyranda-vs-wyrand)). Passes [PractRand](https://pracrand.sourceforge.net/) up to 32TB, [TestU01](https://github.com/umontreal-simul/TestU01-2009)'s BigCrush, and [coll-birth](https://github.com/vigna/coll-birth-rs) for at least 4T elements.
-* **Designed for [`rand`](https://crates.io/crates/rand):** use the `rand` crate traits 10x faster than the default PRNG and 2x faster than `SmallRng`. Perfect for testing, benchmarks, and synthetic datasets.
+* **High quality:** covers the ideal ~63% of its output space where plain wyrand reaches only ~39% ([see below](#quality-wyranda-vs-wyrand)). Passes [PractRand](https://pracrand.sourceforge.net/) up to 32TB, [TestU01](https://github.com/umontreal-simul/TestU01-2009)'s BigCrush, and [coll-birth](https://github.com/vigna/coll-birth-rs) for at least 4T elements.
+* **Designed for [`rand`](https://crates.io/crates/rand):** use the `rand` crate traits 10x faster than the default PRNG and 2x faster than `SmallRng`. Perfect for sampling, game dev, testing, benchmarks, and synthetic datasets.
 * **Tiny:** 109 source lines of code.
-* **64-bit and 128-bit versions:** rapidrand128 has a larger 128-bit internal state for highly distributed workloads, reaching 100% of the possible output space and requiring only two extra CPU instructions.
+* **64-bit and 128-bit versions:** rapidrand128 has a larger 128-bit internal state for distributed workloads with 100% output space coverage and stronger stream separation.
 * **Rust crate and C/C++ header:** Available as either the [rapidrand rust crate](https://crates.io/crates/rapidrand) a or standalone C/C++ header `rapidrand.h` with full support for `<random>`.
 * **Non-cryptographic:** This is **not** a cryptographic random number generator.
 
@@ -16,18 +16,19 @@ Single-threaded criterion benchmarks from `rapidrand-bench` on an M1 Max. Compar
 
 | RNG                                                                        |    `u64` |   `u32` |   fill 1 KiB |
 |:---------------------------------------------------------------------------|---------:|--------:|-------------:|
-| **[rapidrand](https://crates.io/crates/rapidrand) `RapidRand`**             |  0.51 ns | 0.51 ns |   21.67 GB/s |
-| [fastrand](https://crates.io/crates/fastrand) `Rng`*                       |  0.51 ns | 0.52 ns |   21.49 GB/s |
-| [turborand](https://crates.io/crates/turborand) `Rng`*                     |  1.25 ns | 0.51 ns |   21.56 GB/s |
-| [nanorand](https://crates.io/crates/nanorand) `WyRand`*                    |  0.51 ns | 0.51 ns |    3.57 GB/s |
-| [rand](https://crates.io/crates/rand) `SmallRng`                           |  1.13 ns | 1.20 ns |    7.05 GB/s |
-| [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256PlusPlus` |  1.14 ns | 1.19 ns |    7.04 GB/s |
-| [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256StarStar` |  1.30 ns | 1.37 ns |    5.84 GB/s |
-| [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg32`                      |  2.06 ns | 1.02 ns |    3.93 GB/s |
-| [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg64`                      |  1.64 ns | 1.65 ns |    4.81 GB/s |
-| [rand](https://crates.io/crates/rand) `StdRng` (ChaCha12)                  |  4.11 ns | 2.26 ns |    2.02 GB/s |
-| [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha8Rng`           |  5.86 ns | 3.04 ns |    1.45 GB/s |
-| [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha20Rng`          | 13.24 ns | 6.70 ns |    0.62 GB/s |
+| **[rapidrand](https://crates.io/crates/rapidrand) `RapidRand`**            |  0.53 ns | 0.53 ns |   20.83 GB/s |
+| [fastrand](https://crates.io/crates/fastrand) `Rng`*                       |  0.52 ns | 0.52 ns |   21.08 GB/s |
+| [turborand](https://crates.io/crates/turborand) `Rng`*                     |  1.23 ns | 0.51 ns |   21.14 GB/s |
+| **[rapidrand](https://crates.io/crates/rapidrand) `RapidRand128`**         |  0.70 ns | 0.70 ns |   10.89 GB/s |
+| [nanorand](https://crates.io/crates/nanorand) `WyRand`*                    |  0.52 ns | 0.52 ns |    3.50 GB/s |
+| [rand](https://crates.io/crates/rand) `SmallRng`                           |  1.15 ns | 1.21 ns |    6.87 GB/s |
+| [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256PlusPlus` |  1.23 ns | 1.21 ns |    6.91 GB/s |
+| [rand_xoshiro](https://crates.io/crates/rand_xoshiro) `Xoshiro256StarStar` |  1.33 ns | 1.39 ns |    5.72 GB/s |
+| [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg32`                      |  2.11 ns | 1.05 ns |    3.83 GB/s |
+| [rand_pcg](https://crates.io/crates/rand_pcg) `Pcg64`                      |  1.68 ns | 1.68 ns |    4.74 GB/s |
+| [rand](https://crates.io/crates/rand) `StdRng` (ChaCha12)                  |  4.18 ns | 2.30 ns |    1.98 GB/s |
+| [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha8Rng`           |  5.99 ns | 3.11 ns |    1.40 GB/s |
+| [rand_chacha](https://crates.io/crates/rand_chacha) `ChaCha20Rng`          | 13.40 ns | 6.84 ns |    0.61 GB/s |
 
 *These crates implement their own RNG framework and use a [lower quality](#quality-wyranda-vs-wyrand) wyrand construction.
 
@@ -95,6 +96,30 @@ output = ((product >> 64) ^ product) as u64;
 ```
 
 Adding an *odd* constant turns the state into a Weyl counter: because the increment is coprime to 2^64, the counter steps through every state before repeating, giving a full 2^64 period from any seed with no bad seeds. That counter is trivially predictable on its own, so each value is scrambled by `rapid_mix`, which multiplies two of the counter's states together (the new state by the old state XORed with a random-looking constant) and XORs together the high and low halves of the resulting 128-bit product. Multiplication carries low bits upwards into the high half, and the fold brings them back down, spreading the entropy of every input bit across every output bit. Enough to pass PractRand to 32 TB and TestU01's BigCrush, using only 8 bytes of state and a few instructions per draw. The catch is that it is not cryptographic and the state is recoverable from a handful of outputs, stick to `ChaCha`/`StdRng` for cryptographic uses.
+
+### rapidrand128
+
+`rapidrand128` is a wider sibling built for parallel and distributed workloads that need many independent streams. It carries a **128-bit** Weyl counter — a full `2^128` period from any seed — and scrambles both 64-bit halves with a rapidhash-style **double-multiply** avalanche:
+
+```rust,ignore
+let lo = state as u64;
+let hi = (state >> 64) as u64;
+state = state.wrapping_add((RAPID_SECRET_ADD as u128) << 64 | RAPID_SECRET_XOR as u128);
+
+// first widening multiply of the two counter halves
+let p = (hi as u128) * (lo as u128);
+// second widening multiply of the mixed product halves
+let r = ((p as u64 ^ RAPID_SECRET_XOR) as u128) * (((p >> 64) as u64 ^ lo) as u128);
+// fold the second product's halves, adding `hi` into the low half
+output = (r >> 64) as u64 ^ (r as u64).wrapping_add(hi);
+```
+
+The wider state and the extra multiply are designed to buy two things the 64-bit generator cannot offer:
+
+* **100% output coverage.** The double multiply reaches *every* one of the `2^64` output values, in an essentially flat distribution. A single fold-multiply instead structurally over-represents a few outputs — `0` and `u64::MAX` most of all — which the second multiply disperses. Measured exhaustively over the full period of narrow-width models (`cargo test --test exhaustive`), the preimage histogram matches a random function (`var/mean` and `peak/mean` both `~1`).
+* **Stronger stream separation.** Each output is a strong avalanche of the *whole* 128-bit counter, so states seeded from different values decorrelate and distinct seeds behave as independent streams. A `2^128` period leaves room to hand out non-overlapping streams, which the 64-bit generator's `2^64` period does not.
+
+`rapidrand128` is newer than the 64-bit generator; its exhaustive coverage properties are pinned by the tests above, but broad empirical validation (PractRand / TestU01 to the volumes the 64-bit generator has cleared) is still in progress, so treat it as experimental for now.
 
 ## Quality: wyranda vs wyrand
 

@@ -17,18 +17,6 @@ const RAPID_SECRET_ADD: u64 = 0x2d358dccaa6c78a5;
 /// Rapidhash V1 secret[1].
 const RAPID_SECRET_XOR: u64 = 0x8bb84b93962eacc9;
 
-/// Folded 64-bit multiply: compute the 128-bit product `a * b` and XOR its high and low 64-bit
-/// halves together.
-///
-/// Vendored from the `rapidhash` crate so that `rapidrand` stays a zero-dependency crate. Keep this
-/// bit-for-bit in sync with rapidhash: <https://github.com/hoxxep/rapidhash>.
-#[inline(always)]
-#[must_use]
-const fn rapid_mix(a: u64, b: u64) -> u64 {
-    let r = (a as u128).wrapping_mul(b as u128);
-    (r as u64) ^ (r >> 64) as u64
-}
-
 /// Generate a pseudorandom `u64` and advance `state`.
 ///
 /// This PRNG is not a cryptographic random number generator.
@@ -62,21 +50,37 @@ const fn rapid_mix(a: u64, b: u64) -> u64 {
 pub const fn rapidrand(state: &mut u64) -> u64 {
     let old_state = *state;
     *state = state.wrapping_add(RAPID_SECRET_ADD);
-    rapid_mix(*state, old_state ^ RAPID_SECRET_XOR)
+
+    // folded multiply: (new state) * (old state ^ XOR)
+    let r = (*state as u128).wrapping_mul((old_state ^ RAPID_SECRET_XOR) as u128);
+    (r as u64) ^ (r >> 64) as u64
 }
 
 /// Generate a pseudorandom `u64` and advance a 128-bit `state`.
 ///
-/// A wider, longer-period sibling of [`rapidrand`]: it runs a 128-bit Weyl counter and folds its two
-/// 64-bit halves through the same [`rapid_mix`] output filter, so the output depends on two counter
-/// streams and the counter has a full `2^128` period.
+/// A wider, longer-period sibling of [`rapidrand`], intended for parallel and distributed workloads
+/// that need many independent streams. It runs a **128-bit** Weyl counter and passes both of its
+/// 64-bit halves `hi:lo` through a rapidhash-style **double-multiply** avalanche. Compared to the
+/// 64-bit [`rapidrand`] this is designed to buy three properties:
 ///
-/// The counter is incremented by the odd 128-bit constant `(RAPID_SECRET_ADD:RAPID_SECRET_XOR)`, and
-/// the product is `rapid_mix(lo, hi ^ lo)` on the low and high halves `hi:lo` of the *pre-increment*
-/// state. We then add `hi` back into the output to disperse most of the bias towards `0` and
-/// `u64::MAX` output values that `rapid_mix` has, which would otherwise be
-/// [over-represented](https://github.com/wangyi-fudan/wyhash/issues/156#issuecomment-4888162118)
-/// 4x and 93x times respectively in the output stream.
+/// * **Full `2^128` period.** The counter is incremented by the odd 128-bit constant
+///   `(RAPID_SECRET_ADD:RAPID_SECRET_XOR)`, so it steps through every 128-bit state before repeating —
+///   a full period from any seed, with no bad seeds.
+/// * **100% output coverage.** The double multiply reaches *every* one of the `2^64` output values, in
+///   an essentially flat distribution (each value produced about equally often). A single fold-multiply
+///   instead structurally over-represents a handful of outputs — `0` and `u64::MAX`
+///   [most of all](https://github.com/wangyi-fudan/wyhash/issues/156#issuecomment-4888162118) — which
+///   the second multiply and `.wrapping_add(hi)` disperses. This is measured exhaustively on
+///   narrow-width models in `tests/exhaustive.rs` (`var/mean` and `peak/mean` both `~1`).
+/// * **Stronger stream separation.** Because each output is a strong avalanche of the *entire* 128-bit
+///   counter, states seeded from different values (or offset within the period) decorrelate, so distinct
+///   seeds behave as independent streams. The 64-bit generator cannot safely offer this: its `2^64`
+///   period is too short to hand out non-overlapping streams, and its single multiply mixes related
+///   seeds too weakly.
+///
+/// Concretely, with `p = hi · lo` the widening multiply of the two *pre-increment* counter halves, the
+/// output is `hi(r) ^ (lo(r) + hi)` where `r = (lo(p) ^ XOR) · (hi(p) ^ lo)` is the second widening
+/// multiply and `hi(·)`/`lo(·)` are the high and low 64-bit halves of a 128-bit product.
 ///
 /// This PRNG is not a cryptographic random number generator.
 ///
@@ -92,9 +96,18 @@ pub const fn rapidrand(state: &mut u64) -> u64 {
 pub const fn rapidrand128(state: &mut u128) -> u64 {
     let lo = *state as u64;
     let hi = (*state >> 64) as u64;
-    // 128-bit odd increment (RAPID_SECRET_ADD:RAPID_SECRET_XOR) => full 2^128 period.
     *state = state.wrapping_add(((RAPID_SECRET_ADD as u128) << 64) | RAPID_SECRET_XOR as u128);
-    rapid_mix(lo, hi ^ lo).wrapping_add(hi)
+
+    // first product
+    let p = (hi as u128).wrapping_mul(lo as u128);
+    let phi = (p >> 64) as u64;
+    let plo = p as u64;
+
+    // second product; XOR `lo`
+    let r = ((plo ^ RAPID_SECRET_XOR) as u128).wrapping_mul((phi ^ lo) as u128);
+
+    // fold; ADD `hi`
+    (r >> 64) as u64 ^ (r as u64).wrapping_add(hi)
 }
 
 /// A random number generator that uses the rapidhash mixing algorithm.
@@ -160,32 +173,34 @@ impl SeedableRng for RapidRand {
 
     #[inline]
     fn from_seed(seed: Self::Seed) -> Self {
-        Self {
-            state: u64::from_le_bytes(seed),
-        }
+        let state = u64::from_le_bytes(seed);
+        Self { state }
     }
 
     #[inline]
     fn seed_from_u64(mut state: u64) -> Self {
-        Self {
-            state: rapidrand(&mut state),
-        }
+        let state = rapidrand(&mut state);
+        Self { state }
     }
 }
 
 /// A wider, longer-period random number generator built on the 128-bit [`rapidrand128`] construction.
 ///
 /// Like [`RapidRand`] this is a fast, deterministic, non-cryptographic RNG, but it carries a 128-bit
-/// Weyl counter (a full `2^128` period) instead of 64 bits.
+/// Weyl counter (a full `2^128` period) instead of 64 bits. The extra width and its double-multiply
+/// avalanche are designed for parallel and distributed workloads: 100% output coverage and stronger
+/// stream separation, so distinct seeds behave as independent streams. See [`rapidrand128`] for the
+/// construction and the properties it targets.
 ///
 /// With the `rand` feature, this RNG implements [`rand_core::Rng`] and [`rand_core::SeedableRng`]
 /// on top of [`rapidrand128`] and is fully compatible with `rand` v0.10.
 ///
 /// # Compatibility
 ///
-/// [`RapidRand128`] is **not** bit-compatible with [`RapidRand`], and unlike the 64-bit generator it
-/// has not yet been validated against the statistical test suites — treat it as experimental until it
-/// is.
+/// [`RapidRand128`] is **not** bit-compatible with [`RapidRand`]. Its design properties are checked
+/// exhaustively on narrow-width models (`tests/exhaustive.rs`), but broad empirical validation to the
+/// volumes [`RapidRand`] has cleared (PractRand / TestU01 / coll-birth) is still in progress — treat it
+/// as experimental until that lands.
 ///
 /// # Examples
 /// Seed it from `rand`'s thread-local RNG (itself seeded from the OS) with `from_rng`:
@@ -242,20 +257,16 @@ impl SeedableRng for RapidRand128 {
 
     #[inline]
     fn from_seed(seed: Self::Seed) -> Self {
-        Self {
-            state: u128::from_le_bytes(seed),
-        }
+        let state = u128::from_le_bytes(seed);
+        Self { state }
     }
 
     #[inline]
-    fn seed_from_u64(mut seed: u64) -> Self {
-        // Expand the seed through the 64-bit generator so both halves of the counter start
-        // well-mixed and nearby seeds diverge.
-        let mut s = rapidrand(&mut seed);
-        let lo = rapidrand(&mut s);
-        let hi = rapidrand(&mut s);
-        Self {
-            state: ((hi as u128) << 64) | lo as u128,
-        }
+    fn seed_from_u64(seed: u64) -> Self {
+        // Avalanche is strong, no seed pre-mixing is required, no weak seeds. To avoid starting
+        // on state = 0 (which produces output = 0) we make state = 0 impossible when seeding from
+        // a single u64 via u128.wrapping_add(1).
+        let state = (seed as u128).wrapping_add(1);
+        Self { state }
     }
 }

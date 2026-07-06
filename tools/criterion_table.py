@@ -31,9 +31,10 @@ GROUPS = [("u64", 8), ("u32", 4), ("fill", None)]
 # Bench function id -> what the row measures. Also fixes the row order for ties.
 CRATES = {
     "rapidrand": "**[rapidrand](https://crates.io/crates/rapidrand) `RapidRand`**",
-    "fastrand": "[fastrand](https://crates.io/crates/fastrand) `Rng`",
-    "nanorand_wyrand": "[nanorand](https://crates.io/crates/nanorand) `WyRand`",
-    "turborand": "[turborand](https://crates.io/crates/turborand) `Rng`",
+    "rapidrand128": "**[rapidrand](https://crates.io/crates/rapidrand) `RapidRand128`**",
+    "fastrand": "[fastrand](https://crates.io/crates/fastrand) `Rng`*",
+    "nanorand_wyrand": "[nanorand](https://crates.io/crates/nanorand) `WyRand`*",
+    "turborand": "[turborand](https://crates.io/crates/turborand) `Rng`*",
     "rand_small": "[rand](https://crates.io/crates/rand) `SmallRng`",
     "rand_std": "[rand](https://crates.io/crates/rand) `StdRng` (ChaCha12)",
     "pcg32": "[rand_pcg](https://crates.io/crates/rand_pcg) `Pcg32`",
@@ -98,7 +99,7 @@ def main() -> None:
     # rapidrand first, then everything else by geomean throughput (ties broken by CRATES order).
     def sort_key(name: str) -> tuple[bool, float, int]:
         crate_order = list(CRATES).index(name) if name in CRATES else len(CRATES)
-        return (not name.startswith("rapidrand"), -geomean_gbps(name), crate_order)
+        return (not name.startswith("rapidrand") or name.startswith("rapidrand128"), -geomean_gbps(name), crate_order)
 
     fill_bytes = next((tp for _, tp in data["fill"].values()), 1024)
 

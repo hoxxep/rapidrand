@@ -30,11 +30,16 @@ const std::uint64_t GOLD_SEED42[4] = {
     UINT64_C(0xa479de8b0772c88e), UINT64_C(0x4193166b6cbce80d),
     UINT64_C(0xc01e8d40942abd24), UINT64_C(0xd409cd732c181cab),
 };
-// `rapidrand128_init(42)`: the 128-bit variant has no Rust counterpart yet, so
-// this pins it to itself (a change in its output is then a deliberate decision).
+// `rapidrand128` advanced from a raw 128-bit state of 42, pinned to the Rust
+// crate's `rapidrand128`:
+const std::uint64_t GOLD_128_RAW42[4] = {
+    UINT64_C(0xec3c6636a3a858ec), UINT64_C(0x5472dbfbaa8a2075),
+    UINT64_C(0x2c545e695efaa9f4), UINT64_C(0xb0e325e61498c821),
+};
+// `rapidrand128_init(42)` == `RapidRand128::seed_from_u64(42)` (state = seed + 1):
 const std::uint64_t GOLD_128_42[4] = {
-    UINT64_C(0xce35907038503a76), UINT64_C(0xe74c914cc1391afe),
-    UINT64_C(0xe4b0c1dfc5ca4df9), UINT64_C(0x0e7da9230d0072c4),
+    UINT64_C(0x77f4b1ca39d705d4), UINT64_C(0xdc146a194ad790cb),
+    UINT64_C(0x021857f3710dd1de), UINT64_C(0x6b4ec955bdb6007e),
 };
 
 int g_fails = 0;
@@ -56,8 +61,21 @@ void check_golden() {
     rapidrand seeded = rapidrand_init(42);
     for (int i = 0; i < 4; ++i) expect("seed42", rapidrand_next(&seeded), GOLD_SEED42[i]);
 
+    // Raw 128-bit state of 42, however the platform represents it.
+    rapidrand128 raw128{};
+#if RAPIDRAND_HAS_INT128
+    raw128.state = 42;
+#else
+    raw128.lo = 42;
+#endif
+    for (int i = 0; i < 4; ++i) expect("raw128", rapidrand128_next(&raw128), GOLD_128_RAW42[i]);
+
     rapidrand128 wide = rapidrand128_init(42);
     for (int i = 0; i < 4; ++i) expect("wide42", rapidrand128_next(&wide), GOLD_128_42[i]);
+
+    // Seeding adds 1 so seed 0 never lands on the all-zero state (whose output is 0).
+    rapidrand128 zero = rapidrand128_init(0);
+    if (rapidrand128_next(&zero) == 0) { std::printf("FAIL seed 0 produced 0\n"); ++g_fails; }
 }
 
 // The C++ wrappers must produce exactly the same stream as the C core.
@@ -123,7 +141,7 @@ constexpr std::uint64_t ct_128_first() {
     rapidrand128 r = rapidrand128_init(42);
     return rapidrand128_next(&r);
 }
-static_assert(ct_128_first() == UINT64_C(0xce35907038503a76), "constexpr 128 mismatch");
+static_assert(ct_128_first() == UINT64_C(0x77f4b1ca39d705d4), "constexpr 128 mismatch");
 #endif
 
 }  // namespace
