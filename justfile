@@ -4,8 +4,19 @@
 # (`RNG_test`) and TestU01 (`testu01_stdin`). See TESTING.md for tool installation and how to read
 # the results.
 #
-# Override tool locations via env vars, e.g.
-#   RNG_TEST=~/PractRand/RNG_test TESTU01_PREFIX=/opt/testu01 just testu01 rapidrand bigcrush
+# Both tools are built from source (neither ships on a package manager). Point these env vars at
+# your local builds; the defaults assume the binaries are on PATH / under /usr/local.
+#
+#   RNG_TEST        path to PractRand's compiled RNG_test binary
+#                   (default: RNG_test, i.e. found on PATH)
+#                   e.g. export RNG_TEST=~/src/practrand/PractRand/RNG_test
+#   TESTU01_PREFIX  install prefix holding TestU01's include/ and lib/
+#                   (default: /usr/local)
+#                   e.g. export TESTU01_PREFIX=~/src/TestU01
+#
+# For example:
+#   RNG_TEST=~/src/practrand/PractRand/RNG_test just practrand rapidrand
+#   TESTU01_PREFIX=~/src/TestU01 just testu01 rapidrand bigcrush
 
 set shell := ["bash", "-uc"]
 
@@ -20,10 +31,16 @@ cat := justfile_directory() / "target/release/rapidrand-cat"
 testu01_bin := justfile_directory() / "tools/testu01_stdin"
 
 # Every generator rapidrand-cat knows, for the sweep recipes.
-rngs := "rapidrand fastrand turborand nanorand_wyrand pcg32 pcg64 xoshiro256++ xoshiro256** chacha8 chacha20 rand_small rand_std"
+rngs := "rapidrand rapidrand128 fastrand turborand nanorand_wyrand pcg32 pcg64 xoshiro256++ xoshiro256** chacha8 chacha20 rand_small rand_std"
 
 _default:
     @just --list
+    @echo ""
+    @echo "Tool locations (build both from source; override via env var):"
+    @echo "  RNG_TEST        PractRand RNG_test binary    (default: RNG_test on PATH)"
+    @echo "                  e.g. ~/src/practrand/PractRand/RNG_test"
+    @echo "  TESTU01_PREFIX  TestU01 install prefix        (default: /usr/local)"
+    @echo "                  e.g. ~/src/TestU01"
 
 # Build the byte streamer (release, matching the workspace LTO profile).
 build:
@@ -36,17 +53,17 @@ list: build
 # ── PractRand ──────────────────────────────────────────────────────────────────
 # Run PractRand against one RNG, doubling data volume until failure or `max` bytes.
 # Extra flags pass straight to RNG_test, e.g. `just practrand rapidrand 1TB -tf 2`.
-practrand rng max="16TB" *flags: build
-    {{cat}} --rng {{rng}} | {{practrand}} stdin64 -tlmax {{max}} {{flags}}
+practrand rng max="32TB" *flags: build
+    {{cat}} --rng {{rng}} | {{practrand}} stdin64 -tlmax {{max}} -tf 2 -te 1 {{flags}}
 
 # PractRand on the bit-reversed stream (probes the high bits).
-practrand-rev rng max="16TB" *flags: build
-    {{cat}} --rng {{rng}} --bit-reverse | {{practrand}} stdin64 -tlmax {{max}} {{flags}}
+practrand-rev rng max="32TB" *flags: build
+    {{cat}} --rng {{rng}} --bit-reverse | {{practrand}} stdin64 -tlmax {{max}} -tf 2 -te 1 {{flags}}
 
 # PractRand on interleaved adjacent seeds (inter-stream correlation — key for rapidrand).
-practrand-interleave rng streams="256" max="16TB" *flags: build
+practrand-interleave rng streams="256" max="32TB" *flags: build
     {{cat}} --rng {{rng}} --mode interleave --streams {{streams}} \
-        | {{practrand}} stdin64 -tlmax {{max}} {{flags}}
+        | {{practrand}} stdin64 -tlmax {{max}} -tf 2 -te 1 {{flags}}
 
 # Quick PractRand pass (default 4GB) across every RNG, for side-by-side comparison.
 practrand-sweep max="4GB": build
@@ -54,7 +71,7 @@ practrand-sweep max="4GB": build
     set -uo pipefail
     for rng in {{rngs}}; do
         echo "=================  $rng  ================="
-        {{cat}} --rng "$rng" | {{practrand}} stdin64 -tlmax {{max}}
+        {{cat}} --rng "$rng" | {{practrand}} stdin64 -tlmax {{max}} -tf 2 -te 1
     done
 
 # ── TestU01 / BigCrush ─────────────────────────────────────────────────────────

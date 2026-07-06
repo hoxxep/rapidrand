@@ -18,13 +18,95 @@ use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main};
 use rand_core::SeedableRng;
 
-use rapidrand::{RapidRng, rapidrng, rapidrng_single};
+use rapidrand::{RapidRand, RapidRand128, rapidrand, rapidrand128};
 
 /// Deterministic seed so every run measures the same work.
 const SEED: u64 = 0x1234_5678_9abc_def0;
 
 /// Size of the buffer used by the `fill` workload.
 const FILL_BYTES: usize = 1024;
+
+// ---------------------------------------------------------------------------
+// wyrand-family constructions, reimplemented locally so we can benchmark them
+// side by side even though `rapidrand` only ships the `wyranda` variant
+// (exported as [`rapidrand`], identical to `wyranda_parallel` below).
+//
+// All four share the same Weyl counter and the same folded multiply, differing
+// only in the output filter — so this group demonstrates that the stronger
+// `wyranda` construction costs nothing over base `wyrand`. See the coverage
+// analysis in `rapidrand/tests/exhaustive.rs` for what "stronger" means.
+// ---------------------------------------------------------------------------
+
+/// Rapidhash V1 secrets (odd increment guarantees a full 2^64 period).
+const ADD: u64 = 0x2d358dccaa6c78a5;
+const XOR: u64 = 0x8bb84b93962eacc9;
+
+/// Folded 64-bit widening multiply, matching `rapidhash`'s `rapid_mix`.
+#[inline(always)]
+fn mix(a: u64, b: u64) -> u64 {
+    let r = (a as u128).wrapping_mul(b as u128);
+    (r as u64) ^ (r >> 64) as u64
+}
+
+/// Original two-constant wyrand: `mix(state, state ^ XOR)`. Symmetric, ~39.3% coverage.
+#[inline(always)]
+fn wyrand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(ADD);
+    mix(*state, *state ^ XOR)
+}
+
+/// Single-constant w1rand: reuses `ADD` as the xor secret. Symmetric, plus consecutive repeats.
+#[inline(always)]
+fn w1rand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(ADD);
+    mix(*state, *state ^ ADD)
+}
+
+/// reinerp's chain variant: `mix(old, new ^ XOR)`. Asymmetric, ~63.2% coverage.
+#[inline(always)]
+fn wyranda_chain(state: &mut u64) -> u64 {
+    let old = *state;
+    *state = state.wrapping_add(ADD);
+    mix(old, *state ^ XOR)
+}
+
+/// reinerp's parallel variant: `mix(new, old ^ XOR)`. Asymmetric, ~63.2% coverage. Shipped as
+/// `rapidrand`.
+#[inline(always)]
+fn wyranda_parallel(state: &mut u64) -> u64 {
+    let old = *state;
+    *state = state.wrapping_add(ADD);
+    mix(*state, old ^ XOR)
+}
+
+struct Mwc192 {
+    x: u64,
+    y: u64,
+    c: u64,
+}
+
+#[inline(always)]
+fn mwc192(state: &mut Mwc192) -> u64 {
+    let r = state.y;
+    let t = 0xffa04e67b3c95d86u128.wrapping_mul(state.x as u128) + state.c as u128;
+    state.x = state.y;
+    state.y = t as u64;
+    state.c = (t >> 64) as u64;
+    r
+}
+
+/// Experimental 128-bit variant that adds the high counter half back into the shipped
+/// `rapidrand128` output: `mix(lo, hi ^ lo) + hi`. The extra `add` injects a full-entropy word that
+/// flattens the folded-multiply's structural output spikes (notably the `~2x` over-representation of
+/// `0`); benchmarked here to confirm the mitigation costs ~one instruction. Not shipped — see the
+/// `wyrand128_addhi_*` tests in `rapidrand/tests/exhaustive.rs`.
+#[inline(always)]
+fn rapidrand128_addhi(state: &mut u128) -> u64 {
+    let lo = *state as u64;
+    let hi = (*state >> 64) as u64;
+    *state = state.wrapping_add(((ADD as u128) << 64) | XOR as u128);
+    mix(lo, hi ^ lo).wrapping_add(hi)
+}
 
 // ---------------------------------------------------------------------------
 // Per-workload helpers for any generator implementing `rand_core::Rng`.
@@ -54,7 +136,8 @@ fn bench_fill<R: rand_core::Rng>(g: &mut BenchmarkGroup<'_, WallTime>, name: &st
 /// Run `$f` against every `rand_core::Rng` generator, keeping the list in one place.
 macro_rules! bench_rand_core_rngs {
     ($group:expr, $f:ident) => {{
-        $f($group, "rapidrand", RapidRng::seed_from_u64(SEED));
+        $f($group, "rapidrand", RapidRand::seed_from_u64(SEED));
+        $f($group, "rapidrand128", RapidRand128::seed_from_u64(SEED));
         $f(
             $group,
             "rand_small",
@@ -92,16 +175,49 @@ fn bench_u64_workload(c: &mut Criterion) {
     let mut g = c.benchmark_group("u64");
     g.throughput(Throughput::Bytes(size_of::<u64>() as u64));
 
-    // Raw rapidrand function, as a dependency-free baseline.
+    // Shipped rapidrand function (the wyranda construction), as a dependency-free baseline.
     g.bench_function("rapidrand_raw", |b| {
         let mut seed = SEED;
-        b.iter(|| rapidrng(&mut seed))
+        b.iter(|| rapidrand(&mut seed))
     });
 
-    // Raw single-constant variant, to compare against `rapidrng`.
-    g.bench_function("rapidrand_single_raw", |b| {
+    // Shipped 128-bit rapidrand function, the wider longer-period variant.
+    g.bench_function("rapidrand128_raw", |b| {
+        let mut seed = SEED as u128;
+        b.iter(|| rapidrand128(&mut seed))
+    });
+
+    // Experimental `+ hi` variant, to confirm the bias mitigation costs ~one instruction.
+    g.bench_function("rapidrand128_addhi_raw", |b| {
+        let mut seed = SEED as u128;
+        b.iter(|| rapidrand128_addhi(&mut seed))
+    });
+
+    // The wyrand-family constructions reimplemented locally, to confirm they are all the same speed
+    // (only their output quality differs — see the module comment above).
+    g.bench_function("wyrand", |b| {
         let mut seed = SEED;
-        b.iter(|| rapidrng_single(&mut seed))
+        b.iter(|| wyrand(&mut seed))
+    });
+    g.bench_function("w1rand", |b| {
+        let mut seed = SEED;
+        b.iter(|| w1rand(&mut seed))
+    });
+    g.bench_function("wyranda_chain", |b| {
+        let mut seed = SEED;
+        b.iter(|| wyranda_chain(&mut seed))
+    });
+    g.bench_function("wyranda_parallel", |b| {
+        let mut seed = SEED;
+        b.iter(|| wyranda_parallel(&mut seed))
+    });
+    g.bench_function("mwc192", |b| {
+        let mut state = Mwc192 {
+            x: SEED,
+            y: SEED,
+            c: 1,
+        };
+        b.iter(|| mwc192(&mut state))
     });
 
     g.bench_function("fastrand", |b| {
@@ -128,7 +244,7 @@ fn bench_u64_workload(c: &mut Criterion) {
 
 /// Controlled experiments isolating why `&self`/`Cell` RNGs (e.g. turborand) can
 /// be ~2.4x slower on a single `u64` draw than `&mut` RNGs, despite identical
-/// mixing math. All four run the same `rapidrng` arithmetic; only the state
+/// mixing math. All four run the same `rapidrand` arithmetic; only the state
 /// write-back pattern differs. Findings:
 /// * `mut_store_before`  — `&mut` state, stored before the mix → register-carried, fast.
 /// * `mut_store_after`   — `&mut` state, stored after the mix → register-carried,  fast.

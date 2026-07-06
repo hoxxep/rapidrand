@@ -1,0 +1,81 @@
+name: C++
+
+# Compiles and runs the single-header `rapidrand.h` C++ test across compilers,
+# language standards (C++11/14/17/20), and targets (32/64-bit, native __int128
+# vs. the portable multiply path), plus a compile-only check that the header
+# still builds as C. C++-only for results; Rust <-> C++ equivalence is tested
+# separately in the Rust workflow.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  linux:
+    name: "C++ (${{ matrix.cxx }}, ${{ matrix.arch }}-bit)"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { cc: gcc,   cxx: g++,     arch: "64" }
+          - { cc: gcc,   cxx: g++,     arch: "32" }
+          - { cc: clang, cxx: clang++, arch: "64" }
+          - { cc: clang, cxx: clang++, arch: "32" }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install 32-bit toolchain
+        if: matrix.arch == '32'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib g++-multilib
+      - name: Run C++ tests
+        env:
+          CXX: ${{ matrix.cxx }}
+          CXXFLAGS_EXTRA: ${{ matrix.arch == '32' && '-m32' || '' }}
+        run: bash tools/test_cpp.sh
+      - name: Compile-only C check
+        env:
+          CC: ${{ matrix.cc }}
+          CFLAGS_EXTRA: ${{ matrix.arch == '32' && '-m32' || '' }}
+        run: bash tools/test_c.sh
+
+  macos:
+    name: "C++ (AppleClang)"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run C++ tests
+        run: bash tools/test_cpp.sh
+      - name: Compile-only C check
+        run: bash tools/test_c.sh
+
+  windows:
+    name: "C++ (MSVC, ${{ matrix.arch }})"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ x64, x86 ]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Run C++ tests (MSVC)
+        shell: cmd
+        run: |
+          for %%s in (14 17 20) do (
+            echo == /std:c++%%s ==
+            cl /nologo /EHsc /W3 /O2 /std:c++%%s /I . /Fe:test_%%s.exe tools\test_rapidrand.cpp || exit /b 1
+            test_%%s.exe || exit /b 1
+          )
+      - name: Compile-only C check (MSVC)
+        shell: cmd
+        run: |
+          echo == C (default) ==
+          cl /nologo /W3 /c /TC /I . tools\test_rapidrand.c || exit /b 1
+          echo == C11 ==
+          cl /nologo /W3 /c /TC /std:c11 /I . tools\test_rapidrand.c || exit /b 1
+          echo == C17 ==
+          cl /nologo /W3 /c /TC /std:c17 /I . tools\test_rapidrand.c || exit /b 1

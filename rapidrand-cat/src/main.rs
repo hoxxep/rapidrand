@@ -27,7 +27,7 @@ use std::process::ExitCode;
 use nanorand::Rng as _;
 use rand_core::{Rng as _, SeedableRng};
 
-use rapidrand::{RapidRng, rapidrng};
+use rapidrand::{RapidRand, RapidRand128, rapidrand, rapidrand128};
 
 /// A word source: repeatedly called to produce the next `u64`.
 type Gen = Box<dyn FnMut() -> u64>;
@@ -40,6 +40,8 @@ const DEFAULT_SEED: u64 = 0x1234_5678_9abc_def0;
 const RNGS: &[(&str, &[&str])] = &[
     ("rapidrand", &[]),
     ("rapidrand_raw", &["raw"]),
+    ("rapidrand128", &[]),
+    ("rapidrand128_raw", &["raw128"]),
     ("fastrand", &[]),
     ("turborand", &[]),
     ("nanorand_wyrand", &["nanorand"]),
@@ -64,12 +66,20 @@ fn canonical(name: &str) -> Option<&'static str> {
 fn make_gen(rng: &str, seed: u64) -> Gen {
     match rng {
         "rapidrand" => {
-            let mut r = RapidRng::seed_from_u64(seed);
+            let mut r = RapidRand::seed_from_u64(seed);
             Box::new(move || r.next_u64())
         }
         "rapidrand_raw" => {
             let mut s = seed;
-            Box::new(move || rapidrng(&mut s))
+            Box::new(move || rapidrand(&mut s))
+        }
+        "rapidrand128" => {
+            let mut r = RapidRand128::seed_from_u64(seed);
+            Box::new(move || r.next_u64())
+        }
+        "rapidrand128_raw" => {
+            let mut s = seed as u128;
+            Box::new(move || rapidrand128(&mut s))
         }
         "fastrand" => {
             let mut r = fastrand::Rng::with_seed(seed);

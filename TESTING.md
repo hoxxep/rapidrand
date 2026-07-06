@@ -6,8 +6,9 @@ suites against it.
 
 Two pieces drive the tests:
 
-- **`rapidrand-cat`** — streams raw RNG bytes (little-endian `u64`) to stdout, for `rapidrand` or
-  any competitor (`fastrand`, `turborand`, `nanorand`, PCG, xoshiro, ChaCha).
+- **`rapidrand-cat`** — streams raw RNG bytes (little-endian `u64`) to stdout, for `rapidrand`,
+  the wider `rapidrand128`, or any competitor (`fastrand`, `turborand`, `nanorand`, PCG, xoshiro,
+  ChaCha).
 - **the `justfile`** — recipes that pipe `rapidrand-cat` into PractRand and TestU01.
 
 PractRand and TestU01 consume a byte stream and are not aware of the generator. The adjacent-seed
