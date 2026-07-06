@@ -5,9 +5,9 @@ An extremely fast pseudo-random number generator in rust. Using the [rapidhash](
 * **Extremely fast:** matching the performance of [`fastrand`](https://crates.io/crates/fastrand), [`nanorand`](https://crates.io/crates/nanorand), and [`turborand`](https://crates.io/crates/turborand), which all use the wyrand construction behind their own RNG frameworks.
 * **High quality:** reaches ~63% of its output space where plain wyrand reaches only ~39% ([see below](#quality-wyranda-vs-wyrand)). Passes [PractRand](https://pracrand.sourceforge.net/) up to 32TB, [TestU01](https://github.com/umontreal-simul/TestU01-2009)'s BigCrush, and [coll-birth](https://github.com/vigna/coll-birth-rs) for at least 4T elements.
 * **Designed for [`rand`](https://crates.io/crates/rand):** use the `rand` crate traits 10x faster than the default PRNG and 2x faster than `SmallRng`. Perfect for testing, benchmarks, and synthetic datasets.
-* **Tiny:** 61 source lines of code.
-* **64-bit and 128-bit:** 64-bit and 128-bit versions available.
-* **Rust crate and C/C++ header:** Available as either a rust crate or standalone C/C++ header, `rapidrand.h`, with full support for `<random>`..
+* **Tiny:** 109 source lines of code.
+* **64-bit and 128-bit versions:** rapidrand128 has a larger 128-bit internal state for highly distributed workloads, reaching 100% of the possible output space and requiring only two extra CPU instructions.
+* **Rust crate and C/C++ header:** Available as either the [rapidrand rust crate](https://crates.io/crates/rapidrand) a or standalone C/C++ header `rapidrand.h` with full support for `<random>`.
 * **Non-cryptographic:** This is **not** a cryptographic random number generator.
 
 ## Performance

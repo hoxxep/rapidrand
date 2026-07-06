@@ -31,7 +31,7 @@ cat := justfile_directory() / "target/release/rapidrand-cat"
 testu01_bin := justfile_directory() / "tools/testu01_stdin"
 
 # Every generator rapidrand-cat knows, for the sweep recipes.
-rngs := "rapidrand fastrand turborand nanorand_wyrand pcg32 pcg64 xoshiro256++ xoshiro256** chacha8 chacha20 rand_small rand_std"
+rngs := "rapidrand rapidrand128 fastrand turborand nanorand_wyrand pcg32 pcg64 xoshiro256++ xoshiro256** chacha8 chacha20 rand_small rand_std"
 
 _default:
     @just --list
