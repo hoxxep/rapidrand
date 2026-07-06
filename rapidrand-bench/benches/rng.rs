@@ -79,6 +79,22 @@ fn wyranda_parallel(state: &mut u64) -> u64 {
     mix(*state, old ^ XOR)
 }
 
+struct Mwc192 {
+    x: u64,
+    y: u64,
+    c: u64,
+}
+
+#[inline(always)]
+fn mwc192(state: &mut Mwc192) -> u64 {
+    let r = state.y;
+    let t = 0xffa04e67b3c95d86u128.wrapping_mul(state.x as u128) + state.c as u128;
+    state.x = state.y;
+    state.y = t as u64;
+    state.c = (t >> 64) as u64;
+    r
+}
+
 /// Experimental 128-bit variant that adds the high counter half back into the shipped
 /// `rapidrand128` output: `mix(lo, hi ^ lo) + hi`. The extra `add` injects a full-entropy word that
 /// flattens the folded-multiply's structural output spikes (notably the `~2x` over-representation of
@@ -194,6 +210,14 @@ fn bench_u64_workload(c: &mut Criterion) {
     g.bench_function("wyranda_parallel", |b| {
         let mut seed = SEED;
         b.iter(|| wyranda_parallel(&mut seed))
+    });
+    g.bench_function("mwc192", |b| {
+        let mut state = Mwc192 {
+            x: SEED,
+            y: SEED,
+            c: 1,
+        };
+        b.iter(|| mwc192(&mut state))
     });
 
     g.bench_function("fastrand", |b| {
