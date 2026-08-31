@@ -7,7 +7,7 @@
 #![deny(unused_must_use)]
 
 #[cfg(feature = "rand")]
-use rand_core::{SeedableRng, TryRng, utils::fill_bytes_via_next_word};
+use rand_core::{Rng, SeedableRng, TryRng, utils::fill_bytes_via_next_word};
 
 /// Rapidhash V1 secret[0].
 ///
@@ -169,6 +169,19 @@ impl SeedableRng for RapidRng {
     fn seed_from_u64(mut state: u64) -> Self {
         Self {
             state: rapidrng(&mut state),
+        }
+    }
+
+    fn from_rng<R: Rng + ?Sized>(rng: &mut R) -> Self {
+        Self {
+            state: rng.next_u64(),
+        }
+    }
+
+    fn try_from_rng<R: TryRng + ?Sized>(rng: &mut R) -> Result<Self, R::Error> {
+        match rng.try_next_u64() {
+            Ok(state) => Ok(Self { state }),
+            Err(e) => Err(e),
         }
     }
 }
